@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TestPilot</title>
+  <style>
+    /* ── Reset & base ──────────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #ffffff;
+      --surface:   #75c1ff;
+      --surface2:  #75c1ff;
+      --border:    #30363d;
+      --border2:   #21262d;
+      --text:      #001f5c;
+      --muted:     #011634;
+      --accent:    #002044;
+      --accent-dim:#1f3d5c;
+      --green:     #7aff8e;
+      --green-dim: #122519;
+      --red:       #ff473d;
+      --red-dim:   #2d1212;
+      --yellow:    #d29922;
+      --yellow-dim:#2b1f00;
+      --purple:    #8d3bff;
+      --radius:    8px;
+      --radius-lg: 12px;
+      --mono:      'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+      --sans:      -apple-system, 'Segoe UI', system-ui, sans-serif;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 14px;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    /* ── Layout ────────────────────────────────────────────────────────── */
+    .shell {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 0 24px 80px;
+    }
+
+    /* ── Header ────────────────────────────────────────────────────────── */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 28px 0 24px;
+      border-bottom: 1px solid var(--border2);
+      margin-bottom: 32px;
+    }
+    .logo-mark {
+      width: 38px; height: 38px;
+      background: var(--accent);
+      border-radius: var(--radius);
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+    .logo-mark svg { width: 22px; height: 22px; }
+    .header-text h1 {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      color: var(--text);
+    }
+    .header-text p {
+      font-size: 13px;
+      color: var(--muted);
+      margin-top: 1px;
+    }
+    .header-badge {
+      margin-left: auto;
+      font-size: 11px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      padding: 3px 10px;
+      border-radius: 20px;
+    }
+
+    /* ── Concept strip ─────────────────────────────────────────────────── */
+    .concept-strip {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 18px 24px;
+      margin-bottom: 32px;
+      overflow-x: auto;
+    }
+    .concept-step {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      flex: 1;
+      min-width: 160px;
+    }
+    .concept-step .cs-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .concept-step .cs-value {
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .cs-value.green { color: var(--green); }
+    .cs-value.red   { color: var(--red); }
+    .cs-value.blue  { color: var(--accent); }
+    .cs-value.purple{ color: var(--purple); }
+    .concept-arrow {
+      color: var(--muted);
+      font-size: 18px;
+      padding: 0 16px;
+      flex-shrink: 0;
+      align-self: center;
+    }
+
+    /* ── Card ──────────────────────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 20px 24px;
+      margin-bottom: 24px;
+    }
+    .card-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      margin-bottom: 16px;
+    }
+
+    /* ── Project selector ──────────────────────────────────────────────── */
+    .project-row {
+      display: flex;
+      gap: 12px;
+      align-items: flex-end;
+      flex-wrap: wrap;
+    }
+    .field { display: flex; flex-direction: column; gap: 6px; }
+    .field label {
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--muted);
+    }
+    .field select, .field input {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-size: 14px;
+      font-family: var(--sans);
+      padding: 8px 12px;
+      outline: none;
+      min-width: 240px;
+      transition: border-color 0.15s;
+    }
+    .field select:focus, .field input:focus {
+      border-color: var(--accent);
+    }
+    .field select option { background: var(--surface); }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 20px;
+      border-radius: var(--radius);
+      border: none;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover { opacity: 0.88; }
+    .btn-primary:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    /* ── Spinner ───────────────────────────────────────────────────────── */
+    .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Loading overlay ───────────────────────────────────────────────── */
+    .loading-block {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+      padding: 48px 0;
+      color: var(--muted);
+    }
+    .loading-block .big-spinner {
+      width: 32px; height: 32px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    .loading-block p { font-size: 14px; }
+    .loading-block small { font-size: 12px; color: var(--border); }
+
+    /* ── Error ─────────────────────────────────────────────────────────── */
+    .error-block {
+      background: var(--red-dim);
+      border: 1px solid var(--red);
+      border-radius: var(--radius);
+      padding: 14px 18px;
+      color: var(--red);
+      font-size: 13px;
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+    }
+    .error-block .err-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+
+    /* ── Summary metric cards ──────────────────────────────────────────── */
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+    }
+    .metric-card {
+      background: var(--surface2);
+      border: 1px solid var(--border2);
+      border-radius: var(--radius-lg);
+      padding: 18px 20px;
+    }
+    .metric-card .mc-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+      color: var(--muted);
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .metric-card .mc-value {
+      font-size: 32px;
+      font-weight: 700;
+      line-height: 1;
+      letter-spacing: -1px;
+    }
+    .metric-card .mc-sub {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+    .mc-value.score-high   { color: var(--green); }
+    .mc-value.score-mid    { color: var(--yellow); }
+    .mc-value.score-low    { color: var(--red); }
+    .mc-value.count-killed { color: var(--green); }
+    .mc-value.count-survived { color: var(--red); }
+    .mc-value.count-total  { color: var(--accent); }
+
+    /* ── Score bar ─────────────────────────────────────────────────────── */
+    .score-bar-wrap {
+      margin-top: 10px;
+      height: 4px;
+      background: var(--border);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .score-bar-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 0.6s ease;
+    }
+    .score-bar-fill.high { background: var(--green); }
+    .score-bar-fill.mid  { background: var(--yellow); }
+    .score-bar-fill.low  { background: var(--red); }
+
+    /* ── Mutation table ────────────────────────────────────────────────── */
+    .table-wrap { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    thead th {
+      text-align: left;
+      padding: 8px 12px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--muted);
+      font-weight: 600;
+      border-bottom: 1px solid var(--border);
+    }
+    tbody tr {
+      border-bottom: 1px solid var(--border2);
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: var(--surface2); }
+    tbody tr.selected-row { background: var(--accent-dim); }
+    tbody td { padding: 10px 12px; vertical-align: middle; }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      text-transform: uppercase;
+    }
+    .badge-killed {
+      background: var(--green-dim);
+      color: var(--green);
+      border: 1px solid #1f6b2a;
+    }
+    .badge-survived {
+      background: var(--red-dim);
+      color: var(--red);
+      border: 1px solid #6b2020;
+    }
+
+    .op-tag {
+      font-family: var(--mono);
+      font-size: 12px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 8px;
+      color: var(--purple);
+    }
+    .file-cell {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted);
+      max-width: 200px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .line-cell {
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    /* ── AI Insight panel ──────────────────────────────────────────────── */
+    .insight-panel {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      margin-top: 24px;
+    }
+    .insight-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 20px;
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+    }
+    .insight-header .ih-icon {
+      font-size: 20px;
+    }
+    .insight-header .ih-meta { flex: 1; }
+    .insight-header .ih-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .insight-header .ih-sub {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 1px;
+    }
+    .risk-pill {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 12px;
+      border-radius: 20px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .risk-HIGH   { background: var(--red-dim);    color: var(--red);    border: 1px solid #6b2020; }
+    .risk-MEDIUM { background: var(--yellow-dim); color: var(--yellow); border: 1px solid #5a3e00; }
+    .risk-LOW    { background: var(--green-dim);  color: var(--green);  border: 1px solid #1f6b2a; }
+
+    .insight-body { padding: 20px; display: flex; flex-direction: column; gap: 20px; }
+
+    .insight-section .is-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .insight-section .is-text {
+      font-size: 13px;
+      color: var(--text);
+      line-height: 1.65;
+    }
+
+    .diff-pair {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+    .diff-line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 12px;
+      border-radius: 6px;
+    }
+    .diff-original { background: var(--green-dim); color: var(--green); border: 1px solid #1f6b2a; }
+    .diff-mutated  { background: var(--red-dim);   color: var(--red);   border: 1px solid #6b2020; }
+    .diff-prefix   { font-weight: 700; width: 14px; flex-shrink: 0; }
+
+    .code-block {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      font-family: var(--mono);
+      font-size: 12px;
+      line-height: 1.7;
+      color: #c9d1d9;
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-x: auto;
+    }
+    .code-block .kw  { color: #ff7b72; }
+    .code-block .fn  { color: #d2a8ff; }
+    .code-block .st  { color: #a5d6ff; }
+    .code-block .cm  { color: #8b949e; }
+    .code-block .nu  { color: #79c0ff; }
+
+    .test-name-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-family: var(--mono);
+      font-size: 13px;
+      background: var(--accent-dim);
+      color: var(--accent);
+      border: 1px solid #2a5282;
+      padding: 5px 12px;
+      border-radius: var(--radius);
+    }
+
+    /* ── Empty state ───────────────────────────────────────────────────── */
+    .empty-state {
+      text-align: center;
+      padding: 48px 24px;
+      color: var(--muted);
+    }
+    .empty-state .es-icon { font-size: 40px; margin-bottom: 12px; }
+    .empty-state h3 { font-size: 16px; color: var(--text); margin-bottom: 6px; }
+    .empty-state p  { font-size: 13px; }
+
+    /* ── Footer ────────────────────────────────────────────────────────── */
+    .page-footer {
+      margin-top: 48px;
+      padding-top: 20px;
+      border-top: 1px solid var(--border2);
+      text-align: center;
+      font-size: 12px;
+      color: var(--border);
+    }
+
+    /* ── Responsive ────────────────────────────────────────────────────── */
+    @media (max-width: 640px) {
+      .concept-strip { flex-direction: column; align-items: flex-start; gap: 12px; }
+      .concept-arrow { transform: rotate(90deg); align-self: flex-start; }
+      .project-row   { flex-direction: column; align-items: stretch; }
+      .field select, .field input { min-width: unset; width: 100%; }
+      .btn { width: 100%; justify-content: center; }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- React via esm.sh CDN — no build step required -->
+  <script type="module">
+    import React, { useState, useCallback, useMemo } from 'https://esm.sh/react@18';
+    import { createRoot } from 'https://esm.sh/react-dom@18/client';
+
+    /* ── helpers ──────────────────────────────────────────────────────── */
+    const { createElement: h, Fragment } = React;
+
+    function scoreClass(s) {
+      if (s >= 80) return 'high';
+      if (s >= 50) return 'mid';
+      return 'low';
+    }
+
+    function basename(path) {
+      return path ? path.split('/').pop() : '—';
+    }
+
+    function riskyClass(r) {
+      if (!r) return '';
+      const u = r.toUpperCase();
+      if (u === 'HIGH')   return 'risk-HIGH';
+      if (u === 'MEDIUM') return 'risk-MEDIUM';
+      return 'risk-LOW';
+    }
+
+    /* Very light syntax highlight: just keywords/strings/comments/numbers */
+    function highlightPython(code) {
+      if (!code) return '';
+      const kwds = ['def','return','assert','import','from','if','else','elif',
+                    'for','while','with','class','in','not','and','or','True',
+                    'False','None','pass','raise','try','except'];
+      // We'll return plain text — syntax highlighting via regex in innerHTML
+      // Replace in order: comments → strings → keywords → numbers
+      let s = code
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      s = s.replace(/(#[^\n]*)/g, '<span class="cm">$1</span>');
+      s = s.replace(/("""[\s\S]*?"""|'''[\s\S]*?'''|"[^"]*"|'[^']*')/g,
+          '<span class="st">$1</span>');
+      kwds.forEach(k => {
+        s = s.replace(new RegExp(`\\b(${k})\\b`, 'g'), '<span class="kw">$1</span>');
+      });
+      s = s.replace(/\b(\d+\.?\d*)\b/g, '<span class="nu">$1</span>');
+      // function names after 'def'
+      s = s.replace(/(<span class="kw">def<\/span>)\s+(\w+)/g,
+          '$1 <span class="fn">$2</span>');
+      return s;
+    }
+
+    /* ── SVG logo ──────────────────────────────────────────────────────── */
+    function LogoIcon() {
+      return h('svg', { viewBox:'0 0 24 24', fill:'none', stroke:'#fff',
+                        strokeWidth:'2', strokeLinecap:'round', strokeLinejoin:'round' },
+        h('path', { d:'M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18' }),
+        h('line', { x1:'12', y1:'9', x2:'12', y2:'15' }),
+        h('line', { x1:'9',  y1:'12', x2:'15', y2:'12' })
+      );
+    }
+
+    /* ── ConceptStrip ──────────────────────────────────────────────────── */
+    function ConceptStrip() {
+      return h('div', { className: 'concept-strip' },
+        h('div', { className: 'concept-step' },
+          h('span', { className: 'cs-label' }, 'Normal testing'),
+          h('span', { className: 'cs-value green' }, '✓ All tests pass')
+        ),
+        h('span', { className: 'concept-arrow' }, '→'),
+        h('div', { className: 'concept-step' },
+          h('span', { className: 'cs-label' }, 'TestPilot introduces'),
+          h('span', { className: 'cs-value red' }, '⚠ One mutation survived')
+        ),
+        h('span', { className: 'concept-arrow' }, '→'),
+        h('div', { className: 'concept-step' },
+          h('span', { className: 'cs-label' }, 'Gap identified'),
+          h('span', { className: 'cs-value blue' }, '⊙ Missing behavior found')
+        ),
+        h('span', { className: 'concept-arrow' }, '→'),
+        h('div', { className: 'concept-step' },
+          h('span', { className: 'cs-label' }, 'Fix suggested'),
+          h('span', { className: 'cs-value purple' }, '✎ Here\'s the test to write')
+        )
+      );
+    }
+
+    /* ── MetricsGrid ──────────────────────────────────────────────────── */
+    function MetricsGrid({ data }) {
+      const sc = scoreClass(data.mutation_score);
+      const pct = data.mutation_score.toFixed(1);
+      return h('div', { className: 'metrics-grid' },
+        h('div', { className: 'metric-card' },
+          h('div', { className: 'mc-label' }, 'Mutation Score'),
+          h('div', { className: `mc-value score-${sc}` }, `${pct}%`),
+          h('div', { className: 'score-bar-wrap' },
+            h('div', { className: `score-bar-fill ${sc}`,
+                       style: { width: `${Math.min(data.mutation_score, 100)}%` } })
+          ),
+          h('div', { className: 'mc-sub' },
+            sc === 'high' ? 'Strong test coverage' :
+            sc === 'mid'  ? 'Coverage needs improvement' :
+                            'Significant gaps detected'
+          )
+        ),
+        h('div', { className: 'metric-card' },
+          h('div', { className: 'mc-label' }, 'Total Mutations'),
+          h('div', { className: 'mc-value count-total' }, data.total),
+          h('div', { className: 'mc-sub' }, 'Code mutations generated')
+        ),
+        h('div', { className: 'metric-card' },
+          h('div', { className: 'mc-label' }, 'Killed'),
+          h('div', { className: 'mc-value count-killed' }, data.killed),
+          h('div', { className: 'mc-sub' }, 'Caught by your tests')
+        ),
+        h('div', { className: 'metric-card' },
+          h('div', { className: 'mc-label' }, 'Survived'),
+          h('div', { className: 'mc-value count-survived' }, data.survived),
+          h('div', { className: 'mc-sub' }, data.survived === 0 ? 'No gaps found' : 'Behavioral gaps detected')
+        )
+      );
+    }
+
+    /* ── MutationTable ─────────────────────────────────────────────────── */
+    function MutationTable({ mutations, selectedId, onSelect }) {
+      if (mutations.length === 0) {
+        return h('div', { className: 'empty-state' },
+          h('div', { className: 'es-icon' }, '🔬'),
+          h('h3', null, 'No mutations generated'),
+          h('p', null, 'TestPilot found no mutable operators in the source file.')
+        );
+      }
+      return h('div', { className: 'table-wrap' },
+        h('table', null,
+          h('thead', null,
+            h('tr', null,
+              h('th', null, '#'),
+              h('th', null, 'Operator'),
+              h('th', null, 'File'),
+              h('th', null, 'Line'),
+              h('th', null, 'Status')
+            )
+          ),
+          h('tbody', null,
+            mutations.map(m =>
+              h('tr', {
+                  key: m.id,
+                  className: selectedId === m.id ? 'selected-row' : '',
+                  onClick: () => onSelect(m.id === selectedId ? null : m.id)
+                },
+                h('td', null, m.id),
+                h('td', null, h('span', { className: 'op-tag' }, m.operator)),
+                h('td', null, h('span', { className: 'file-cell', title: m.source_file },
+                    basename(m.source_file))),
+                h('td', null, h('span', { className: 'line-cell' }, m.line_number)),
+                h('td', null,
+                  h('span', {
+                    className: `badge ${m.status === 'KILLED' ? 'badge-killed' : 'badge-survived'}`
+                  },
+                    m.status === 'KILLED' ? '✓ Killed' : '⚠ Survived'
+                  )
+                )
+              )
+            )
+          )
+        )
+      );
+    }
+
+    /* ── InsightPanel ──────────────────────────────────────────────────── */
+    function InsightPanel({ mutation }) {
+      if (!mutation) {
+        return h('div', { className: 'empty-state' },
+          h('div', { className: 'es-icon' }, '↑'),
+          h('h3', null, 'Select a mutation above'),
+          h('p', null, 'Click a survived mutation row to see the AI analysis and suggested fix.')
+        );
+      }
+
+      if (mutation.status === 'KILLED') {
+        return h('div', { className: 'empty-state' },
+          h('div', { className: 'es-icon' }, '✓'),
+          h('h3', null, 'Mutation killed'),
+          h('p', null, 'Your existing tests caught this mutation. No action needed.')
+        );
+      }
+
+      const ai = mutation.ai_insight;
+
+      if (!ai) {
+        return h('div', { className: 'empty-state' },
+          h('div', { className: 'es-icon' }, '⏳'),
+          h('h3', null, 'No AI insight available'),
+          h('p', null, 'This mutation survived but no AI analysis was returned.')
+        );
+      }
+
+      return h('div', { className: 'insight-panel' },
+        h('div', { className: 'insight-header' },
+          h('span', { className: 'ih-icon' }, '🤖'),
+          h('div', { className: 'ih-meta' },
+            h('div', { className: 'ih-title' }, 'AI Insight — Behavioral Gap Detected'),
+            h('div', { className: 'ih-sub' },
+              `Mutation #${mutation.id} survived all tests · Line ${mutation.line_number}`
+            )
+          ),
+          h('span', { className: `risk-pill ${riskyClass(ai.risk)}` }, ai.risk || 'UNKNOWN')
+        ),
+        h('div', { className: 'insight-body' },
+
+          h('div', { className: 'insight-section' },
+            h('div', { className: 'is-label' }, 'Code change'),
+            h('div', { className: 'diff-pair' },
+              h('div', { className: 'diff-line diff-original' },
+                h('span', { className: 'diff-prefix' }, '−'),
+                mutation.original_line.trim()
+              ),
+              h('div', { className: 'diff-line diff-mutated' },
+                h('span', { className: 'diff-prefix' }, '+'),
+                mutation.mutated_line.trim()
+              )
+            )
+          ),
+
+          h('div', { className: 'insight-section' },
+            h('div', { className: 'is-label' }, 'Why it survived'),
+            h('div', { className: 'is-text' }, ai.explanation)
+          ),
+
+          h('div', { className: 'insight-section' },
+            h('div', { className: 'is-label' }, 'Missing behavior'),
+            h('div', { className: 'is-text' }, ai.missing_behavior)
+          ),
+
+          h('div', { className: 'insight-section' },
+            h('div', { className: 'is-label' }, 'Suggested test'),
+            h('div', { style: { marginBottom: '10px' } },
+              h('span', { className: 'test-name-tag' },
+                h('span', null, '⚑'),
+                ai.suggested_test_name
+              )
+            ),
+            h('div', {
+              className: 'code-block',
+              dangerouslySetInnerHTML: { __html: highlightPython(ai.suggested_test) }
+            })
+          )
+        )
+      );
+    }
+
+    /* ── App ──────────────────────────────────────────────────────────── */
+    const DEMO_PROJECTS = [
+      { label: 'Calculator',    value: 'demo_projects/calculator' },
+      { label: 'Bank Account',  value: 'demo_projects/bank_account' },
+      { label: 'Score Checker', value: 'demo_projects/score_checker' },
+    ];
+
+    function App() {
+      const [selectedProject, setSelectedProject] = useState('demo_projects/calculator');
+      const [status, setStatus] = useState('idle'); // idle | loading | success | error
+      const [result, setResult]   = useState(null);
+      const [errorMsg, setErrorMsg] = useState('');
+      const [selectedId, setSelectedId] = useState(null);
+
+      const selectedMutation = useMemo(() => {
+        if (!result || selectedId === null) return null;
+        return result.mutations.find(m => m.id === selectedId) || null;
+      }, [result, selectedId]);
+
+      const handleAnalyze = useCallback(async () => {
+        setStatus('loading');
+        setResult(null);
+        setErrorMsg('');
+        setSelectedId(null);
+        try {
+          const resp = await fetch('/api/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_dir: selectedProject }),
+          });
+          if (!resp.ok) {
+            let detail = `HTTP ${resp.status}`;
+            try { const j = await resp.json(); detail = j.detail || detail; } catch {}
+            setErrorMsg(detail);
+            setStatus('error');
+            return;
+          }
+          const data = await resp.json();
+          setResult(data);
+          setStatus('success');
+          // Auto-select first survived mutation that has ai_insight
+          const first = data.mutations.find(m => m.status === 'SURVIVED' && m.ai_insight);
+          if (first) setSelectedId(first.id);
+        } catch (err) {
+          setErrorMsg('Could not reach the server. Make sure the TestPilot backend is running on port 8000.');
+          setStatus('error');
+        }
+      }, [selectedProject]);
+
+      return h(Fragment, null,
+        /* ── Header */
+        h('header', { className: 'header' },
+          h('div', { className: 'logo-mark' }, h(LogoIcon)),
+          h('div', { className: 'header-text' },
+            h('h1', null, 'TestPilot'),
+            h('p', null, 'Your tests are green. But are they actually good?')
+          ),
+          h('span', { className: 'header-badge' }, 'Mutation Testing · AI Insights')
+        ),
+
+        /* ── Concept strip */
+        h(ConceptStrip),
+
+        /* ── Project selector */
+        h('div', { className: 'card' },
+          h('div', { className: 'card-title' }, 'Project'),
+          h('div', { className: 'project-row' },
+            h('div', { className: 'field' },
+              h('label', { htmlFor: 'proj-select' }, 'Demo project'),
+              h('select', {
+                  id: 'proj-select',
+                  value: selectedProject,
+                  onChange: e => setSelectedProject(e.target.value)
+                },
+                DEMO_PROJECTS.map(p =>
+                  h('option', { key: p.value, value: p.value }, p.label)
+                )
+              )
+            ),
+            h('div', { className: 'field' },
+              h('label', { htmlFor: 'proj-path' }, 'Path'),
+              h('input', {
+                id: 'proj-path',
+                value: selectedProject,
+                onChange: e => setSelectedProject(e.target.value),
+                placeholder: 'demo_projects/...',
+                spellCheck: false
+              })
+            ),
+            h('button', {
+                className: 'btn btn-primary',
+                onClick: handleAnalyze,
+                disabled: status === 'loading'
+              },
+              status === 'loading'
+                ? h(Fragment, null, h('span', { className: 'spinner' }), 'Analyzing…')
+                : h(Fragment, null, '▶ Run Analysis')
+            )
+          )
+        ),
+
+        /* ── Loading */
+        status === 'loading' && h('div', { className: 'card' },
+          h('div', { className: 'loading-block' },
+            h('div', { className: 'big-spinner' }),
+            h('p', null, 'Running mutation pipeline…'),
+            h('small', null, 'Generating mutations · Running pytest · Consulting AI advisor')
+          )
+        ),
+
+        /* ── Error */
+        status === 'error' && h('div', { className: 'card' },
+          h('div', { className: 'error-block' },
+            h('span', { className: 'err-icon' }, '✕'),
+            h('div', null,
+              h('strong', null, 'Analysis failed'),
+              h('br'),
+              errorMsg
+            )
+          )
+        ),
+
+        /* ── Results */
+        status === 'success' && result && h(Fragment, null,
+
+          /* Summary metrics */
+          h('div', { className: 'card' },
+            h('div', { className: 'card-title' }, 'Summary'),
+            h(MetricsGrid, { data: result })
+          ),
+
+          /* Mutation list */
+          h('div', { className: 'card' },
+            h('div', { className: 'card-title' },
+              `Mutations (${result.total}) — click a row to inspect`
+            ),
+            h(MutationTable, {
+              mutations: result.mutations,
+              selectedId,
+              onSelect: setSelectedId
+            })
+          ),
+
+          /* AI Insight */
+          h('div', { className: 'card' },
+            h('div', { className: 'card-title' }, 'AI Analysis'),
+            h(InsightPanel, { mutation: selectedMutation })
+          )
+        ),
+
+        /* ── Idle state */
+        status === 'idle' && h('div', { className: 'empty-state', style: { padding: '64px 0' } },
+          h('div', { className: 'es-icon' }, '🧬'),
+          h('h3', null, 'Ready to analyze'),
+          h('p', null, 'Select a project and click Run Analysis to start mutation testing.')
+        ),
+
+        /* ── Footer */
+        h('div', { className: 'page-footer' }, 'TestPilot · AI-powered mutation testing')
+      );
+    }
+
+    /* ── Mount ─────────────────────────────────────────────────────────── */
+    createRoot(document.getElementById('root')).render(
+      h('div', { className: 'shell' }, h(App))
+    );
+  </script>
+</body>
+</html>

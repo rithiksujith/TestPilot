@@ -8,7 +8,10 @@ Or from the project root:
     python -m uvicorn backend.main:app --reload
 """
 
+from pathlib import Path
+
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 
 from backend.api.routes import router
 
@@ -19,3 +22,8 @@ app = FastAPI(
 )
 
 app.include_router(router)
+
+
+@app.get("/", include_in_schema=False)
+def serve_ui() -> FileResponse:
+    return FileResponse(Path(__file__).parent.parent / "frontend" / "ui.html")
