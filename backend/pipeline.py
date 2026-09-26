@@ -31,13 +31,13 @@ Usage
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
 from backend.ai.advisor import AnalysisResult, analyze_surviving_mutation
 from backend.runner.runner import KILLED, SURVIVED
-from backend.runner.workflow import WorkflowResult, run_mutation_workflow
+from backend.runner.workflow import MutationReport, WorkflowResult, run_all_mutations_workflow, run_mutation_workflow
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +94,81 @@ class PipelineResult:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+@dataclass
+class PipelineReport:
+    """Aggregated output of the full mutation-testing pipeline across all mutations."""
+
+    results: list[PipelineResult] = field(default_factory=list)
+
+    @property
+    def total(self) -> int:
+        return len(self.results)
+
+    @property
+    def killed(self) -> int:
+        return sum(1 for r in self.results if r.status == KILLED)
+
+    @property
+    def survived(self) -> int:
+        return sum(1 for r in self.results if r.status == SURVIVED)
+
+    @property
+    def mutation_score(self) -> float:
+        """Percentage of mutations killed (0.0–100.0). Returns 0.0 for empty."""
+        if self.total == 0:
+            return 0.0
+        return self.killed / self.total * 100
+
+
+def run_all_pipeline(
+    source_file: str | Path,
+    project_dir: str | Path,
+) -> PipelineReport:
+    """Run the full mutation-testing pipeline for every mutation in *source_file*.
+
+    Parameters
+    ----------
+    source_file:
+        Path to the Python source file to mutate.
+    project_dir:
+        Root directory of the project under test (must contain the test suite).
+
+    Returns
+    -------
+    PipelineReport
+        Contains per-mutation PipelineResult entries (KILLED and SURVIVED) plus
+        aggregate stats: total, killed, survived, mutation_score.
+        Only SURVIVED mutations are analysed by the AI advisor.
+    """
+    report: MutationReport = run_all_mutations_workflow(
+        source_file=source_file,
+        project_dir=project_dir,
+    )
+
+    pipeline_results: list[PipelineResult] = []
+    for wf in report.results:
+        ai_insight: Optional[AnalysisResult] = None
+        if wf.status == SURVIVED:
+            ai_insight = analyze_surviving_mutation(wf.mutation)
+
+        m = wf.mutation
+        r = wf.run_result
+        pipeline_results.append(PipelineResult(
+            mutation_id=m.id,
+            source_file=m.source_file,
+            line_number=m.line_number,
+            operator=m.operator,
+            original_line=m.original_line,
+            mutated_line=m.mutated_line,
+            status=wf.status,
+            pytest_exit_code=r.exit_code,
+            pytest_output=r.output,
+            ai_insight=ai_insight,
+        ))
+
+    return PipelineReport(results=pipeline_results)
+
 
 def run_pipeline(
     source_file: str | Path,

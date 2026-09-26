@@ -19,10 +19,10 @@ import pytest
 
 from backend.ai.advisor import AnalysisResult
 from backend.mutations.engine import Mutation
-from backend.pipeline import PipelineResult, run_pipeline
+from backend.pipeline import PipelineReport, PipelineResult, run_all_pipeline, run_pipeline
 from backend.runner.runner import KILLED, SURVIVED
 from backend.runner.runner import RunResult
-from backend.runner.workflow import WorkflowResult
+from backend.runner.workflow import MutationReport, WorkflowResult
 
 # ---------------------------------------------------------------------------
 # Shared paths (relative to project root)
@@ -320,3 +320,170 @@ class TestPipelineIntegration:
         assert a.missing_behavior
         assert a.suggested_test
         assert a.suggested_test_name
+
+
+# ===========================================================================
+# Helpers for multi-mutation tests
+# ===========================================================================
+
+def _fake_mutation_n(n: int, operator: str = ">= \u2192 >") -> Mutation:
+    """Build a fake Mutation with id=n."""
+    return Mutation(
+        id=n,
+        source_file=DEMO_SOURCE.resolve(),
+        line_number=23 + n,
+        operator=operator,
+        original_line="        if self._balance >= amount:",
+        mutated_line="        if self._balance > amount:",
+        original_source="",
+        mutated_source="",
+    )
+
+
+def _fake_workflow_result_n(n: int, status: str) -> WorkflowResult:
+    mutation = _fake_mutation_n(n)
+    run_result = _fake_run_result(
+        status=status,
+        exit_code=0 if status == SURVIVED else 1,
+    )
+    return WorkflowResult(mutation=mutation, run_result=run_result)
+
+
+def _fake_mutation_report(statuses: list[str]) -> MutationReport:
+    """Build a MutationReport with one WorkflowResult per entry in *statuses*."""
+    report = MutationReport()
+    for i, status in enumerate(statuses, start=1):
+        report.results.append(_fake_workflow_result_n(i, status))
+    return report
+
+
+# ===========================================================================
+# run_all_pipeline — PipelineReport shape
+# ===========================================================================
+
+class TestRunAllPipelineReport:
+    """run_all_pipeline must return a PipelineReport with correct stats."""
+
+    def _run(self, statuses: list[str]) -> PipelineReport:
+        mr = _fake_mutation_report(statuses)
+        with (
+            patch("backend.pipeline.run_all_mutations_workflow") as mock_wf,
+            patch("backend.pipeline.analyze_surviving_mutation") as mock_ai,
+        ):
+            mock_wf.return_value = mr
+            mock_ai.return_value = _fake_analysis()
+            return run_all_pipeline(DEMO_SOURCE, DEMO_DIR)
+
+    def test_returns_pipeline_report(self):
+        result = self._run([KILLED, SURVIVED])
+        assert isinstance(result, PipelineReport)
+
+    def test_total_count(self):
+        result = self._run([KILLED, SURVIVED, KILLED])
+        assert result.total == 3
+
+    def test_killed_count(self):
+        result = self._run([KILLED, SURVIVED, KILLED])
+        assert result.killed == 2
+
+    def test_survived_count(self):
+        result = self._run([KILLED, SURVIVED, KILLED])
+        assert result.survived == 1
+
+    def test_mutation_score_all_killed(self):
+        result = self._run([KILLED, KILLED])
+        assert result.mutation_score == 100.0
+
+    def test_mutation_score_partial(self):
+        result = self._run([KILLED, SURVIVED])
+        assert result.mutation_score == pytest.approx(50.0)
+
+    def test_mutation_score_empty(self):
+        result = self._run([])
+        assert result.mutation_score == 0.0
+
+    def test_results_list_length(self):
+        result = self._run([KILLED, SURVIVED, SURVIVED])
+        assert len(result.results) == 3
+
+
+# ===========================================================================
+# run_all_pipeline — survivor analysis
+# ===========================================================================
+
+class TestRunAllPipelineSurvivorAnalysis:
+    """Advisor must be called only for SURVIVED mutations."""
+
+    def test_advisor_called_for_each_survivor(self):
+        mr = _fake_mutation_report([KILLED, SURVIVED, SURVIVED])
+        with (
+            patch("backend.pipeline.run_all_mutations_workflow") as mock_wf,
+            patch("backend.pipeline.analyze_surviving_mutation") as mock_ai,
+        ):
+            mock_wf.return_value = mr
+            mock_ai.return_value = _fake_analysis()
+            run_all_pipeline(DEMO_SOURCE, DEMO_DIR)
+
+        assert mock_ai.call_count == 2
+
+    def test_advisor_not_called_for_killed(self):
+        mr = _fake_mutation_report([KILLED, KILLED])
+        with (
+            patch("backend.pipeline.run_all_mutations_workflow") as mock_wf,
+            patch("backend.pipeline.analyze_surviving_mutation") as mock_ai,
+        ):
+            mock_wf.return_value = mr
+            run_all_pipeline(DEMO_SOURCE, DEMO_DIR)
+
+        mock_ai.assert_not_called()
+
+    def test_survived_result_has_ai_insight(self):
+        mr = _fake_mutation_report([SURVIVED])
+        with (
+            patch("backend.pipeline.run_all_mutations_workflow") as mock_wf,
+            patch("backend.pipeline.analyze_surviving_mutation") as mock_ai,
+        ):
+            mock_wf.return_value = mr
+            mock_ai.return_value = _fake_analysis()
+            result = run_all_pipeline(DEMO_SOURCE, DEMO_DIR)
+
+        assert result.results[0].ai_insight is not None
+
+    def test_killed_result_has_no_ai_insight(self):
+        mr = _fake_mutation_report([KILLED])
+        with (
+            patch("backend.pipeline.run_all_mutations_workflow") as mock_wf,
+            patch("backend.pipeline.analyze_surviving_mutation") as mock_ai,
+        ):
+            mock_wf.return_value = mr
+            result = run_all_pipeline(DEMO_SOURCE, DEMO_DIR)
+
+        assert result.results[0].ai_insight is None
+        mock_ai.assert_not_called()
+
+    def test_mixed_ai_insight_presence(self):
+        """In a mixed report, only SURVIVED entries carry an AI insight."""
+        mr = _fake_mutation_report([KILLED, SURVIVED])
+        with (
+            patch("backend.pipeline.run_all_mutations_workflow") as mock_wf,
+            patch("backend.pipeline.analyze_surviving_mutation") as mock_ai,
+        ):
+            mock_wf.return_value = mr
+            mock_ai.return_value = _fake_analysis()
+            result = run_all_pipeline(DEMO_SOURCE, DEMO_DIR)
+
+        assert result.results[0].ai_insight is None   # KILLED
+        assert result.results[1].ai_insight is not None  # SURVIVED
+
+    def test_gte_to_gt_operator_preserved(self):
+        """The >= → > operator label must be preserved on each PipelineResult."""
+        mr = _fake_mutation_report([SURVIVED])
+        with (
+            patch("backend.pipeline.run_all_mutations_workflow") as mock_wf,
+            patch("backend.pipeline.analyze_surviving_mutation") as mock_ai,
+        ):
+            mock_wf.return_value = mr
+            mock_ai.return_value = _fake_analysis()
+            result = run_all_pipeline(DEMO_SOURCE, DEMO_DIR)
+
+        assert result.results[0].operator == ">= \u2192 >"
