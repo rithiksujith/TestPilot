@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from backend.discovery import discover_source_files
-from backend.pipeline import PipelineResult, run_pipeline
+from backend.pipeline import PipelineReport, run_all_pipeline
 
 router = APIRouter(prefix="/api")
 
@@ -45,11 +45,6 @@ class AnalyzeRequest(BaseModel):
         default="demo_projects/bank_account",
         description="Root directory of the project under test.",
     )
-    mutation_id: int = Field(
-        default=1,
-        description="Numeric identifier for this mutation run.",
-        ge=1,
-    )
 
 
 class AiInsightResponse(BaseModel):
@@ -62,52 +57,64 @@ class AiInsightResponse(BaseModel):
     suggested_test_name: str
 
 
-class AnalyzeResponse(BaseModel):
-    """JSON representation of a PipelineResult."""
+class MutationResult(BaseModel):
+    """Result for a single mutation within a pipeline run."""
 
-    mutation_id: int
+    id: int
     source_file: str
     line_number: int
     operator: str
     original_line: str
     mutated_line: str
     status: str                             # "KILLED" or "SURVIVED"
-    mutation_score: Optional[float]         # 0.0 (survived) or 1.0 (killed); None if unavailable
-    ai_insight: Optional[AiInsightResponse]
+    ai_insight: Optional[AiInsightResponse]  # only present when status == SURVIVED
+
+
+class AnalyzeResponse(BaseModel):
+    """JSON representation of a PipelineReport."""
+
+    total: int
+    killed: int
+    survived: int
+    mutation_score: float
+    mutations: list[MutationResult]
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _pipeline_result_to_response(result: PipelineResult) -> AnalyzeResponse:
-    """Convert a PipelineResult dataclass into the API response model."""
-    ai = None
-    if result.ai_insight is not None:
-        a = result.ai_insight
-        ai = AiInsightResponse(
-            explanation=a.explanation,
-            risk=a.risk,
-            missing_behavior=a.missing_behavior,
-            suggested_test=a.suggested_test,
-            suggested_test_name=a.suggested_test_name,
-        )
-
-    # mutation_score: simple single-mutation score
-    #   1.0 = mutation was killed (good — tests caught it)
-    #   0.0 = mutation survived (bad — tests missed it)
-    mutation_score = 1.0 if result.status == "KILLED" else 0.0
+def _pipeline_report_to_response(report: PipelineReport) -> AnalyzeResponse:
+    """Convert a PipelineReport dataclass into the API response model."""
+    mutations: list[MutationResult] = []
+    for result in report.results:
+        ai = None
+        if result.ai_insight is not None:
+            a = result.ai_insight
+            ai = AiInsightResponse(
+                explanation=a.explanation,
+                risk=a.risk,
+                missing_behavior=a.missing_behavior,
+                suggested_test=a.suggested_test,
+                suggested_test_name=a.suggested_test_name,
+            )
+        mutations.append(MutationResult(
+            id=result.mutation_id,
+            source_file=str(result.source_file),
+            line_number=result.line_number,
+            operator=result.operator,
+            original_line=result.original_line,
+            mutated_line=result.mutated_line,
+            status=result.status,
+            ai_insight=ai,
+        ))
 
     return AnalyzeResponse(
-        mutation_id=result.mutation_id,
-        source_file=str(result.source_file),
-        line_number=result.line_number,
-        operator=result.operator,
-        original_line=result.original_line,
-        mutated_line=result.mutated_line,
-        status=result.status,
-        mutation_score=mutation_score,
-        ai_insight=ai,
+        total=report.total,
+        killed=report.killed,
+        survived=report.survived,
+        mutation_score=report.mutation_score,
+        mutations=mutations,
     )
 
 
@@ -129,12 +136,13 @@ def analyze(body: AnalyzeRequest) -> AnalyzeResponse:
     1. Resolves the source file — uses the explicit ``source_file`` when
        provided, otherwise discovers Python source files in ``project_dir``
        and selects the first one.
-    2. Generates a mutation (``>=`` → ``>``) in *source_file*.
-    3. Copies *project_dir* to a temp directory with the mutation applied.
-    4. Runs pytest inside that temp directory.
-    5. Classifies the result as **KILLED** or **SURVIVED**.
-    6. If SURVIVED, calls the AI advisor for an explanation and a suggested test.
-    7. Returns the combined result as JSON.
+    2. Generates all supported mutations in *source_file*.
+    3. For each mutation: copies *project_dir* to a temp directory, applies
+       the mutation, runs pytest, and classifies the result as KILLED or
+       SURVIVED.
+    4. For each SURVIVED mutation, calls the AI advisor for an explanation
+       and a suggested test.
+    5. Returns the combined results as JSON.
 
     For the demo, send an empty body ``{}`` to analyze the bank_account project
     via automatic source-file discovery.
@@ -164,12 +172,11 @@ def analyze(body: AnalyzeRequest) -> AnalyzeResponse:
         source = candidates[0]
 
     try:
-        result = run_pipeline(
+        report = run_all_pipeline(
             source_file=source,
             project_dir=project,
-            mutation_id=body.mutation_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    return _pipeline_result_to_response(result)
+    return _pipeline_report_to_response(report)

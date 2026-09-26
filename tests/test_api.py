@@ -3,12 +3,12 @@ Tests for the TestPilot FastAPI API.
 
 Strategy
 --------
-* Unit tests use ``unittest.mock.patch`` to replace ``run_pipeline`` so they
-  run instantly without spawning subprocesses.
+* Unit tests use ``unittest.mock.patch`` to replace ``run_all_pipeline`` so
+  they run instantly without spawning subprocesses.
 * One slow integration test calls the real pipeline end-to-end via the
   TestClient to verify the full stack works together.
 
-All tests use FastAPI's built-in ``TestClient`` (backed by httpx2).
+All tests use FastAPI's built-in ``TestClient`` (backed by httpx).
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 
 from backend.ai.advisor import AnalysisResult
 from backend.main import app
-from backend.pipeline import PipelineResult
+from backend.pipeline import PipelineReport, PipelineResult
 from backend.runner.runner import KILLED, SURVIVED
 
 client = TestClient(app)
@@ -68,9 +68,9 @@ def _fake_survived_result() -> PipelineResult:
 
 def _fake_killed_result() -> PipelineResult:
     return PipelineResult(
-        mutation_id=1,
+        mutation_id=2,
         source_file=Path(DEMO_SOURCE).resolve(),
-        line_number=23,
+        line_number=30,
         operator=">= \u2192 >",
         original_line="        if self._balance >= amount:",
         mutated_line="        if self._balance > amount:",
@@ -79,6 +79,21 @@ def _fake_killed_result() -> PipelineResult:
         pytest_output="1 failed",
         ai_insight=None,
     )
+
+
+def _fake_report_survived_only() -> PipelineReport:
+    """Report with one SURVIVED mutation."""
+    return PipelineReport(results=[_fake_survived_result()])
+
+
+def _fake_report_killed_only() -> PipelineReport:
+    """Report with one KILLED mutation."""
+    return PipelineReport(results=[_fake_killed_result()])
+
+
+def _fake_report_mixed() -> PipelineReport:
+    """Report with one SURVIVED and one KILLED mutation."""
+    return PipelineReport(results=[_fake_survived_result(), _fake_killed_result()])
 
 
 # ===========================================================================
@@ -118,18 +133,10 @@ class TestAnalyzeRequestValidation:
         })
         assert response.status_code == 422
 
-    def test_mutation_id_must_be_positive(self):
-        response = client.post("/api/analyze", json={
-            "source_file": DEMO_SOURCE,
-            "project_dir": DEMO_DIR,
-            "mutation_id": 0,
-        })
-        assert response.status_code == 422
-
     def test_empty_body_uses_demo_defaults(self):
         """An empty body {} should reach the pipeline with the demo project defaults."""
-        with patch("backend.api.routes.run_pipeline") as mock_pipe:
-            mock_pipe.return_value = _fake_survived_result()
+        with patch("backend.api.routes.run_all_pipeline") as mock_pipe:
+            mock_pipe.return_value = _fake_report_survived_only()
             response = client.post("/api/analyze", json={})
 
         assert response.status_code == 200
@@ -139,14 +146,14 @@ class TestAnalyzeRequestValidation:
 
 
 # ===========================================================================
-# POST /api/analyze — SURVIVED response shape
+# POST /api/analyze — aggregate response fields
 # ===========================================================================
 
-class TestAnalyzeSurvivedResponse:
+class TestAnalyzeAggregateFields:
     @pytest.fixture(autouse=True)
     def mock_pipeline(self):
-        with patch("backend.api.routes.run_pipeline") as mock:
-            mock.return_value = _fake_survived_result()
+        with patch("backend.api.routes.run_all_pipeline") as mock:
+            mock.return_value = _fake_report_mixed()
             self.response = client.post("/api/analyze", json={
                 "source_file": DEMO_SOURCE,
                 "project_dir": DEMO_DIR,
@@ -156,76 +163,137 @@ class TestAnalyzeSurvivedResponse:
     def test_returns_200(self):
         assert self.response.status_code == 200
 
-    def test_has_mutation_id(self):
-        assert self.data["mutation_id"] == 1
+    def test_has_total(self):
+        assert self.data["total"] == 2
+
+    def test_has_killed(self):
+        assert self.data["killed"] == 1
+
+    def test_has_survived(self):
+        assert self.data["survived"] == 1
+
+    def test_has_mutation_score(self):
+        # 1 killed out of 2 = 50.0
+        assert self.data["mutation_score"] == pytest.approx(50.0)
+
+    def test_has_mutations_list(self):
+        assert isinstance(self.data["mutations"], list)
+        assert len(self.data["mutations"]) == 2
+
+
+# ===========================================================================
+# POST /api/analyze — individual mutation item shape
+# ===========================================================================
+
+class TestMutationItemShape:
+    @pytest.fixture(autouse=True)
+    def mock_pipeline(self):
+        with patch("backend.api.routes.run_all_pipeline") as mock:
+            mock.return_value = _fake_report_survived_only()
+            self.response = client.post("/api/analyze", json={
+                "source_file": DEMO_SOURCE,
+                "project_dir": DEMO_DIR,
+            })
+        self.data = self.response.json()
+        self.mutation = self.data["mutations"][0]
+
+    def test_has_id(self):
+        assert self.mutation["id"] == 1
 
     def test_has_source_file(self):
-        assert "bank_account" in self.data["source_file"]
+        assert "bank_account" in self.mutation["source_file"]
 
     def test_has_line_number(self):
-        assert self.data["line_number"] == 23
+        assert self.mutation["line_number"] == 23
 
     def test_has_operator(self):
-        assert ">=" in self.data["operator"]
-        assert ">" in self.data["operator"]
+        assert ">=" in self.mutation["operator"]
+        assert ">" in self.mutation["operator"]
 
     def test_has_original_line(self):
-        assert ">=" in self.data["original_line"]
+        assert ">=" in self.mutation["original_line"]
 
     def test_has_mutated_line(self):
-        assert ">" in self.data["mutated_line"]
+        assert ">" in self.mutation["mutated_line"]
 
-    def test_status_is_survived(self):
-        assert self.data["status"] == SURVIVED
-
-    def test_mutation_score_is_zero_for_survived(self):
-        assert self.data["mutation_score"] == 0.0
-
-    def test_ai_insight_is_present(self):
-        assert self.data["ai_insight"] is not None
-
-    def test_ai_insight_has_explanation(self):
-        assert self.data["ai_insight"]["explanation"]
-
-    def test_ai_insight_has_risk(self):
-        assert self.data["ai_insight"]["risk"]
-
-    def test_ai_insight_has_missing_behavior(self):
-        assert self.data["ai_insight"]["missing_behavior"]
-
-    def test_ai_insight_has_suggested_test(self):
-        assert self.data["ai_insight"]["suggested_test"]
-
-    def test_ai_insight_has_suggested_test_name(self):
-        assert self.data["ai_insight"]["suggested_test_name"]
+    def test_has_status(self):
+        assert self.mutation["status"] == SURVIVED
 
 
 # ===========================================================================
-# POST /api/analyze — KILLED response shape
+# POST /api/analyze — ai_insight only on SURVIVED
 # ===========================================================================
 
-class TestAnalyzeKilledResponse:
-    @pytest.fixture(autouse=True)
-    def mock_pipeline(self):
-        with patch("backend.api.routes.run_pipeline") as mock:
-            mock.return_value = _fake_killed_result()
-            self.response = client.post("/api/analyze", json={
+class TestAiInsightPresence:
+    def test_survived_mutation_has_ai_insight(self):
+        with patch("backend.api.routes.run_all_pipeline") as mock:
+            mock.return_value = _fake_report_survived_only()
+            response = client.post("/api/analyze", json={
                 "source_file": DEMO_SOURCE,
                 "project_dir": DEMO_DIR,
             })
-        self.data = self.response.json()
+        mutation = response.json()["mutations"][0]
+        assert mutation["ai_insight"] is not None
 
-    def test_returns_200(self):
-        assert self.response.status_code == 200
+    def test_killed_mutation_has_no_ai_insight(self):
+        with patch("backend.api.routes.run_all_pipeline") as mock:
+            mock.return_value = _fake_report_killed_only()
+            response = client.post("/api/analyze", json={
+                "source_file": DEMO_SOURCE,
+                "project_dir": DEMO_DIR,
+            })
+        mutation = response.json()["mutations"][0]
+        assert mutation["ai_insight"] is None
 
-    def test_status_is_killed(self):
-        assert self.data["status"] == KILLED
+    def test_ai_insight_has_explanation(self):
+        with patch("backend.api.routes.run_all_pipeline") as mock:
+            mock.return_value = _fake_report_survived_only()
+            response = client.post("/api/analyze", json={
+                "source_file": DEMO_SOURCE,
+                "project_dir": DEMO_DIR,
+            })
+        ai = response.json()["mutations"][0]["ai_insight"]
+        assert ai["explanation"]
 
-    def test_mutation_score_is_one_for_killed(self):
-        assert self.data["mutation_score"] == 1.0
+    def test_ai_insight_has_risk(self):
+        with patch("backend.api.routes.run_all_pipeline") as mock:
+            mock.return_value = _fake_report_survived_only()
+            response = client.post("/api/analyze", json={
+                "source_file": DEMO_SOURCE,
+                "project_dir": DEMO_DIR,
+            })
+        ai = response.json()["mutations"][0]["ai_insight"]
+        assert ai["risk"]
 
-    def test_ai_insight_is_null_for_killed(self):
-        assert self.data["ai_insight"] is None
+    def test_ai_insight_has_missing_behavior(self):
+        with patch("backend.api.routes.run_all_pipeline") as mock:
+            mock.return_value = _fake_report_survived_only()
+            response = client.post("/api/analyze", json={
+                "source_file": DEMO_SOURCE,
+                "project_dir": DEMO_DIR,
+            })
+        ai = response.json()["mutations"][0]["ai_insight"]
+        assert ai["missing_behavior"]
+
+    def test_ai_insight_has_suggested_test(self):
+        with patch("backend.api.routes.run_all_pipeline") as mock:
+            mock.return_value = _fake_report_survived_only()
+            response = client.post("/api/analyze", json={
+                "source_file": DEMO_SOURCE,
+                "project_dir": DEMO_DIR,
+            })
+        ai = response.json()["mutations"][0]["ai_insight"]
+        assert ai["suggested_test"]
+
+    def test_ai_insight_has_suggested_test_name(self):
+        with patch("backend.api.routes.run_all_pipeline") as mock:
+            mock.return_value = _fake_report_survived_only()
+            response = client.post("/api/analyze", json={
+                "source_file": DEMO_SOURCE,
+                "project_dir": DEMO_DIR,
+            })
+        ai = response.json()["mutations"][0]["ai_insight"]
+        assert ai["suggested_test_name"]
 
 
 # ===========================================================================
@@ -234,7 +302,7 @@ class TestAnalyzeKilledResponse:
 
 class TestAnalyzeErrorHandling:
     def test_pipeline_value_error_returns_422(self):
-        with patch("backend.api.routes.run_pipeline") as mock:
+        with patch("backend.api.routes.run_all_pipeline") as mock:
             mock.side_effect = ValueError("No supported mutation operator found")
             response = client.post("/api/analyze", json={
                 "source_file": DEMO_SOURCE,
@@ -245,57 +313,24 @@ class TestAnalyzeErrorHandling:
 
 
 # ===========================================================================
-# POST /api/analyze — mutation_id forwarding
+# POST /api/analyze — empty mutations list
 # ===========================================================================
 
-class TestMutationIdForwarding:
-    def test_mutation_id_forwarded_to_pipeline(self):
-        with patch("backend.api.routes.run_pipeline") as mock:
-            mock.return_value = _fake_killed_result()
-            client.post("/api/analyze", json={
+class TestEmptyMutationsReport:
+    def test_empty_report_returns_zeros(self):
+        with patch("backend.api.routes.run_all_pipeline") as mock:
+            mock.return_value = PipelineReport(results=[])
+            response = client.post("/api/analyze", json={
                 "source_file": DEMO_SOURCE,
                 "project_dir": DEMO_DIR,
-                "mutation_id": 5,
             })
-        _, kwargs = mock.call_args
-        assert kwargs.get("mutation_id") == 5
-
-
-# ===========================================================================
-# Real end-to-end integration test (slow — runs subprocess)
-# ===========================================================================
-
-class TestAnalyzeIntegration:
-    """Calls the real pipeline via the API — spawns pytest in a subprocess."""
-
-    def test_bank_account_returns_survived(self):
-        response = client.post("/api/analyze", json={
-            "source_file": DEMO_SOURCE,
-            "project_dir": DEMO_DIR,
-        })
+        data = response.json()
         assert response.status_code == 200
-        assert response.json()["status"] == SURVIVED
-
-    def test_bank_account_operator(self):
-        response = client.post("/api/analyze", json={
-            "source_file": DEMO_SOURCE,
-            "project_dir": DEMO_DIR,
-        })
-        assert ">=" in response.json()["operator"]
-
-    def test_bank_account_has_ai_insight(self):
-        response = client.post("/api/analyze", json={
-            "source_file": DEMO_SOURCE,
-            "project_dir": DEMO_DIR,
-        })
-        assert response.json()["ai_insight"] is not None
-
-    def test_bank_account_mutation_score_zero(self):
-        response = client.post("/api/analyze", json={
-            "source_file": DEMO_SOURCE,
-            "project_dir": DEMO_DIR,
-        })
-        assert response.json()["mutation_score"] == 0.0
+        assert data["total"] == 0
+        assert data["killed"] == 0
+        assert data["survived"] == 0
+        assert data["mutation_score"] == 0.0
+        assert data["mutations"] == []
 
 
 # ===========================================================================
@@ -306,9 +341,9 @@ class TestAnalyzeWithDiscovery:
     """Tests for the auto-discovery path where source_file is not supplied."""
 
     def test_project_dir_only_calls_pipeline(self):
-        """Omitting source_file should still reach run_pipeline via discovery."""
-        with patch("backend.api.routes.run_pipeline") as mock_pipe:
-            mock_pipe.return_value = _fake_survived_result()
+        """Omitting source_file should still reach run_all_pipeline via discovery."""
+        with patch("backend.api.routes.run_all_pipeline") as mock_pipe:
+            mock_pipe.return_value = _fake_report_survived_only()
             response = client.post("/api/analyze", json={
                 "project_dir": DEMO_DIR,
             })
@@ -317,8 +352,8 @@ class TestAnalyzeWithDiscovery:
 
     def test_project_dir_only_discovers_bank_account(self):
         """When source_file is omitted, discovery must resolve to bank_account.py."""
-        with patch("backend.api.routes.run_pipeline") as mock_pipe:
-            mock_pipe.return_value = _fake_survived_result()
+        with patch("backend.api.routes.run_all_pipeline") as mock_pipe:
+            mock_pipe.return_value = _fake_report_survived_only()
             client.post("/api/analyze", json={
                 "project_dir": DEMO_DIR,
             })
@@ -326,20 +361,22 @@ class TestAnalyzeWithDiscovery:
         assert "bank_account" in str(call_kwargs)
 
     def test_project_dir_only_returns_200(self):
-        with patch("backend.api.routes.run_pipeline") as mock_pipe:
-            mock_pipe.return_value = _fake_killed_result()
+        with patch("backend.api.routes.run_all_pipeline") as mock_pipe:
+            mock_pipe.return_value = _fake_report_killed_only()
             response = client.post("/api/analyze", json={
                 "project_dir": DEMO_DIR,
             })
         assert response.status_code == 200
 
-    def test_project_dir_only_response_has_status(self):
-        with patch("backend.api.routes.run_pipeline") as mock_pipe:
-            mock_pipe.return_value = _fake_killed_result()
+    def test_project_dir_only_response_has_mutations(self):
+        with patch("backend.api.routes.run_all_pipeline") as mock_pipe:
+            mock_pipe.return_value = _fake_report_killed_only()
             response = client.post("/api/analyze", json={
                 "project_dir": DEMO_DIR,
             })
-        assert response.json()["status"] in (KILLED, SURVIVED)
+        data = response.json()
+        assert "mutations" in data
+        assert data["mutations"][0]["status"] in (KILLED, SURVIVED)
 
     def test_invalid_project_dir_returns_422(self):
         response = client.post("/api/analyze", json={
@@ -360,8 +397,8 @@ class TestAnalyzeWithDiscovery:
         """Exactly which file discovery picks must be the first sorted result."""
         (tmp_path / "aaa.py").write_text("x = 1 >= 0\n")
         (tmp_path / "zzz.py").write_text("y = 2 >= 1\n")
-        with patch("backend.api.routes.run_pipeline") as mock_pipe:
-            mock_pipe.return_value = _fake_killed_result()
+        with patch("backend.api.routes.run_all_pipeline") as mock_pipe:
+            mock_pipe.return_value = _fake_report_killed_only()
             client.post("/api/analyze", json={"project_dir": str(tmp_path)})
         called_source = str(mock_pipe.call_args.kwargs.get("source_file", ""))
         assert "aaa.py" in called_source
@@ -369,24 +406,24 @@ class TestAnalyzeWithDiscovery:
     def test_empty_body_uses_discovery(self):
         """An empty body {} must route through discovery (not a hardcoded path)."""
         with patch("backend.api.routes.discover_source_files") as mock_disc, \
-             patch("backend.api.routes.run_pipeline") as mock_pipe:
+             patch("backend.api.routes.run_all_pipeline") as mock_pipe:
             mock_disc.return_value = [Path(DEMO_SOURCE).resolve()]
-            mock_pipe.return_value = _fake_survived_result()
+            mock_pipe.return_value = _fake_report_survived_only()
             response = client.post("/api/analyze", json={})
         assert response.status_code == 200
         mock_disc.assert_called_once()
 
 
 # ===========================================================================
-# POST /api/analyze — explicit source_file still works (Phase 1 compat)
+# POST /api/analyze — explicit source_file still works
 # ===========================================================================
 
 class TestAnalyzeWithExplicitSourceFile:
     """Ensure the existing explicit source_file path is fully preserved."""
 
     def test_explicit_source_file_is_used(self):
-        with patch("backend.api.routes.run_pipeline") as mock_pipe:
-            mock_pipe.return_value = _fake_survived_result()
+        with patch("backend.api.routes.run_all_pipeline") as mock_pipe:
+            mock_pipe.return_value = _fake_report_survived_only()
             client.post("/api/analyze", json={
                 "source_file": DEMO_SOURCE,
                 "project_dir": DEMO_DIR,
@@ -396,8 +433,8 @@ class TestAnalyzeWithExplicitSourceFile:
 
     def test_explicit_source_file_does_not_call_discovery(self):
         with patch("backend.api.routes.discover_source_files") as mock_disc, \
-             patch("backend.api.routes.run_pipeline") as mock_pipe:
-            mock_pipe.return_value = _fake_survived_result()
+             patch("backend.api.routes.run_all_pipeline") as mock_pipe:
+            mock_pipe.return_value = _fake_report_survived_only()
             client.post("/api/analyze", json={
                 "source_file": DEMO_SOURCE,
                 "project_dir": DEMO_DIR,
@@ -413,13 +450,74 @@ class TestAnalyzeWithExplicitSourceFile:
         assert "source_file not found" in response.json()["detail"]
 
     def test_returns_200_with_explicit_source_and_project(self):
-        with patch("backend.api.routes.run_pipeline") as mock_pipe:
-            mock_pipe.return_value = _fake_killed_result()
+        with patch("backend.api.routes.run_all_pipeline") as mock_pipe:
+            mock_pipe.return_value = _fake_report_killed_only()
             response = client.post("/api/analyze", json={
                 "source_file": DEMO_SOURCE,
                 "project_dir": DEMO_DIR,
             })
         assert response.status_code == 200
+
+
+# ===========================================================================
+# POST /api/analyze — bank_account end-to-end integration (slow)
+# ===========================================================================
+
+class TestAnalyzeIntegration:
+    """Calls the real pipeline via the API — spawns pytest in a subprocess."""
+
+    def test_bank_account_returns_200(self):
+        response = client.post("/api/analyze", json={
+            "source_file": DEMO_SOURCE,
+            "project_dir": DEMO_DIR,
+        })
+        assert response.status_code == 200
+
+    def test_bank_account_has_total(self):
+        response = client.post("/api/analyze", json={
+            "source_file": DEMO_SOURCE,
+            "project_dir": DEMO_DIR,
+        })
+        assert response.json()["total"] >= 1
+
+    def test_bank_account_has_mutations_list(self):
+        response = client.post("/api/analyze", json={
+            "source_file": DEMO_SOURCE,
+            "project_dir": DEMO_DIR,
+        })
+        data = response.json()
+        assert isinstance(data["mutations"], list)
+        assert len(data["mutations"]) >= 1
+
+    def test_bank_account_has_mutation_score(self):
+        response = client.post("/api/analyze", json={
+            "source_file": DEMO_SOURCE,
+            "project_dir": DEMO_DIR,
+        })
+        score = response.json()["mutation_score"]
+        assert isinstance(score, float)
+        assert 0.0 <= score <= 100.0
+
+    def test_bank_account_survived_mutation_has_ai_insight(self):
+        response = client.post("/api/analyze", json={
+            "source_file": DEMO_SOURCE,
+            "project_dir": DEMO_DIR,
+        })
+        mutations = response.json()["mutations"]
+        survived = [m for m in mutations if m["status"] == SURVIVED]
+        assert len(survived) >= 1
+        assert survived[0]["ai_insight"] is not None
+
+    def test_bank_account_killed_mutation_has_no_ai_insight(self):
+        response = client.post("/api/analyze", json={
+            "source_file": DEMO_SOURCE,
+            "project_dir": DEMO_DIR,
+        })
+        mutations = response.json()["mutations"]
+        killed = [m for m in mutations if m["status"] == KILLED]
+        # bank_account demo may or may not have killed mutations; only check if present
+        for m in killed:
+            assert m["ai_insight"] is None
 
 
 # ===========================================================================
@@ -429,28 +527,29 @@ class TestAnalyzeWithExplicitSourceFile:
 class TestBankAccountViaDiscovery:
     """Integration tests: run the real pipeline using only project_dir."""
 
-    def test_project_dir_only_returns_survived(self):
-        """The bank_account demo must still SURVIVE when source_file is omitted."""
+    def test_project_dir_only_returns_200(self):
         response = client.post("/api/analyze", json={
             "project_dir": DEMO_DIR,
         })
         assert response.status_code == 200
-        assert response.json()["status"] == SURVIVED
 
-    def test_project_dir_only_has_ai_insight(self):
+    def test_project_dir_only_has_mutations(self):
         response = client.post("/api/analyze", json={
             "project_dir": DEMO_DIR,
         })
-        assert response.json()["ai_insight"] is not None
+        assert len(response.json()["mutations"]) >= 1
 
     def test_project_dir_only_source_file_is_bank_account(self):
         response = client.post("/api/analyze", json={
             "project_dir": DEMO_DIR,
         })
-        assert "bank_account" in response.json()["source_file"]
+        mutations = response.json()["mutations"]
+        assert all("bank_account" in m["source_file"] for m in mutations)
 
-    def test_project_dir_only_mutation_score_zero(self):
+    def test_project_dir_only_mutation_score_is_float(self):
         response = client.post("/api/analyze", json={
             "project_dir": DEMO_DIR,
         })
-        assert response.json()["mutation_score"] == 0.0
+        score = response.json()["mutation_score"]
+        assert isinstance(score, float)
+        assert 0.0 <= score <= 100.0
