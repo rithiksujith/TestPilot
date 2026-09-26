@@ -1,33 +1,47 @@
 """
 Mutation Workflow — ties the engine and runner together.
 
-Usage (from project root)
---------------------------
-    python -m backend.runner.workflow demo_projects/bank_account/bank_account.py \\
-                                      demo_projects/bank_account
-
-Or import and call directly:
-
+Single-mutation usage (backward-compatible)
+-------------------------------------------
     from backend.runner.workflow import run_mutation_workflow
     result = run_mutation_workflow(
         source_file="demo_projects/bank_account/bank_account.py",
         project_dir="demo_projects/bank_account",
     )
-    print(result)
+    print(result.summary())
+
+All-mutations usage (Phase 3)
+------------------------------
+    from backend.runner.workflow import run_all_mutations_workflow
+    report = run_all_mutations_workflow(
+        source_file="demo_projects/calculator/calculator.py",
+        project_dir="demo_projects/calculator",
+    )
+    print(report.summary())
+
+CLI
+---
+    python -m backend.runner.workflow demo_projects/bank_account/bank_account.py \\
+                                      demo_projects/bank_account
 """
 
 from __future__ import annotations
 
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from backend.mutations.engine import Mutation, generate_mutation, write_mutated_project
-from backend.runner.runner import RunResult, run_tests
+from backend.mutations.engine import (
+    Mutation,
+    generate_mutation,
+    generate_mutations,
+    write_mutated_project,
+)
+from backend.runner.runner import KILLED, SURVIVED, RunResult, run_tests
 
 
 # ---------------------------------------------------------------------------
-# Data model
+# Single-mutation result (unchanged — backward compatible)
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -65,7 +79,63 @@ class WorkflowResult:
 
 
 # ---------------------------------------------------------------------------
-# Workflow
+# Multi-mutation report (Phase 3)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class MutationReport:
+    """Aggregated results for all mutations found in a source file."""
+
+    results: list[WorkflowResult] = field(default_factory=list)
+
+    # ---- derived statistics ------------------------------------------------
+
+    @property
+    def total(self) -> int:
+        return len(self.results)
+
+    @property
+    def killed(self) -> int:
+        return sum(1 for r in self.results if r.status == KILLED)
+
+    @property
+    def survived(self) -> int:
+        return sum(1 for r in self.results if r.status == SURVIVED)
+
+    @property
+    def mutation_score(self) -> float:
+        """Percentage of mutations killed (0.0–100.0).  Returns 0.0 for empty."""
+        if self.total == 0:
+            return 0.0
+        return self.killed / self.total * 100
+
+    # ---- display -----------------------------------------------------------
+
+    def summary(self) -> str:
+        lines = [
+            "=" * 60,
+            "TestPilot - Mutation Report",
+            "=" * 60,
+        ]
+        for r in self.results:
+            operator_ascii = r.mutation.operator.replace("\u2192", "->")
+            lines.append(
+                f"  #{r.mutation.id:>3}  line {r.mutation.line_number:<4} "
+                f"{operator_ascii:<12}  {r.status}"
+            )
+        lines += [
+            "-" * 60,
+            f"Total     : {self.total}",
+            f"Killed    : {self.killed}",
+            f"Survived  : {self.survived}",
+            f"Score     : {self.mutation_score:.1f}%",
+            "=" * 60,
+        ]
+        return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Workflow functions
 # ---------------------------------------------------------------------------
 
 def run_mutation_workflow(
@@ -73,32 +143,50 @@ def run_mutation_workflow(
     project_dir: str | Path,
     mutation_id: int = 1,
 ) -> WorkflowResult:
-    """Run the full pipeline for a single mutation.
+    """Run the full pipeline for a **single** mutation (first operator found).
 
-    Steps
-    -----
-    1. Generate mutation (find ``>=`` → ``>``) in *source_file*.
-    2. Copy *project_dir* to a temp directory with the mutation applied.
-    3. Run pytest inside that temp directory.
-    4. Classify the result as KILLED or SURVIVED.
-    5. Delete the temp directory.
-
-    Returns a :class:`WorkflowResult` regardless of classification.
+    This function is kept unchanged for backward compatibility with
+    Person 1's pipeline and the existing API routes.
     """
-    # Step 1 — generate mutation
     mutation = generate_mutation(source_file, mutation_id=mutation_id)
-
-    # Step 2 — write mutated project to temp dir
     tmp_dir = write_mutated_project(mutation, project_dir)
 
     try:
-        # Step 3 & 4 — run tests and classify
         run_result = run_tests(tmp_dir)
     finally:
-        # Step 5 — always clean up, even on unexpected errors
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     return WorkflowResult(mutation=mutation, run_result=run_result)
+
+
+def run_all_mutations_workflow(
+    source_file: str | Path,
+    project_dir: str | Path,
+    start_id: int = 1,
+) -> MutationReport:
+    """Run the full pipeline for **every** mutation found in *source_file*.
+
+    Each mutation is applied independently:
+      - a fresh temp copy of *project_dir* is created
+      - pytest is run against that copy
+      - the copy is deleted
+
+    Returns a :class:`MutationReport` with per-mutation results and an
+    aggregate mutation score.
+    """
+    mutations = generate_mutations(source_file, start_id=start_id)
+    report = MutationReport()
+
+    for mutation in mutations:
+        tmp_dir = write_mutated_project(mutation, project_dir)
+        try:
+            run_result = run_tests(tmp_dir)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+        report.results.append(WorkflowResult(mutation=mutation, run_result=run_result))
+
+    return report
 
 
 # ---------------------------------------------------------------------------
