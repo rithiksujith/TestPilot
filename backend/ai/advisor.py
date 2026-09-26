@@ -68,17 +68,18 @@ def _rule(operator: str, line_pattern: str):
 
 
 # ---------------------------------------------------------------------------
-# Rule: >= → > on a balance-vs-amount guard
+# Rule: >= → > on any boundary guard
 # ---------------------------------------------------------------------------
 
 @_rule(
     operator=">= \u2192 >",           # ">= → >"
-    # Match dotted/attributed identifiers like self._balance and plain names.
+    # Match dotted/attributed identifiers like self._balance and plain names,
+    # as well as numeric literals on the right-hand side.
     line_pattern=r"if\s+([\w.]+)\s*>=\s*([\w.]+)",
 )
 def _analyze_gte_to_gt(mutation: Mutation, match: re.Match) -> AnalysisResult:
-    lhs = match.group(1)   # e.g. "self._balance"  (captured without self.)
-    rhs = match.group(2)   # e.g. "amount"
+    lhs = match.group(1)   # e.g. "self._balance" or "total"
+    rhs = match.group(2)   # e.g. "amount" or "100"
 
     # Derive a readable name for the left-hand side.
     lhs_name = lhs.split(".")[-1].lstrip("_")   # "_balance" → "balance"
@@ -89,9 +90,30 @@ def _analyze_gte_to_gt(mutation: Mutation, match: re.Match) -> AnalysisResult:
         mutation.original_source, mutation.line_number
     )
 
-    # Build the suggested test using the inferred names so it is always
-    # concrete and directly runnable against the real module.
-    module_stem = mutation.source_file.stem          # e.g. "bank_account"
+    module_stem = mutation.source_file.stem   # e.g. "bank_account" / "calculator"
+
+    if class_name == "Unknown":
+        # --- Module-level function (e.g. calculate_discount) ---
+        return _analyze_gte_to_gt_function(
+            mutation, lhs, rhs, lhs_name, method_name, module_stem
+        )
+    else:
+        # --- Class method (e.g. BankAccount.withdraw) ---
+        return _analyze_gte_to_gt_method(
+            mutation, lhs, rhs, lhs_name, class_name, method_name, module_stem
+        )
+
+
+def _analyze_gte_to_gt_method(
+    mutation: Mutation,
+    lhs: str,
+    rhs: str,
+    lhs_name: str,
+    class_name: str,
+    method_name: str,
+    module_stem: str,
+) -> AnalysisResult:
+    """Generate analysis for a >= → > mutation inside a class method."""
     import_name = _to_import_name(class_name)        # e.g. "BankAccount"
     test_amount = 100.0
 
@@ -129,6 +151,58 @@ def _analyze_gte_to_gt(mutation: Mutation, match: re.Match) -> AnalysisResult:
     )
 
 
+def _analyze_gte_to_gt_function(
+    mutation: Mutation,
+    lhs: str,
+    rhs: str,
+    lhs_name: str,
+    func_name: str,
+    module_stem: str,
+) -> AnalysisResult:
+    """Generate analysis for a >= → > mutation inside a module-level function."""
+    # If the RHS is a numeric literal use it as the boundary value directly;
+    # otherwise fall back to a symbolic placeholder so the test is still
+    # concrete and runnable.
+    try:
+        boundary = float(rhs)
+        boundary_repr = repr(int(boundary) if boundary == int(boundary) else boundary)
+    except ValueError:
+        boundary_repr = rhs
+
+    suggested_test = textwrap.dedent(f"""\
+        from {module_stem} import {func_name}
+
+
+        def test_{func_name}_at_boundary():
+            result = {func_name}({boundary_repr})
+            assert result is not None
+    """)
+
+    return AnalysisResult(
+        mutation_id=mutation.id,
+        explanation=(
+            f"The mutation changes the boundary condition from "
+            f"`{lhs} >= {rhs}` to `{lhs} > {rhs}`. "
+            f"With the original operator, calling `{func_name}` with "
+            f"`{lhs}` exactly equal to `{rhs}` takes the guarded branch. "
+            f"After the mutation, that exact boundary case follows the "
+            f"opposite branch instead."
+        ),
+        risk=(
+            "An important boundary condition is not protected by the current "
+            "test suite. A future refactor could silently introduce this bug "
+            "and no test would catch it."
+        ),
+        missing_behavior=(
+            f"No existing test verifies the behaviour of `{func_name}` when "
+            f"`{lhs}` is exactly equal to `{rhs}`. The boundary case "
+            f"`{lhs} == {rhs}` is never exercised."
+        ),
+        suggested_test_name=f"test_{func_name}_at_boundary",
+        suggested_test=suggested_test,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Context helpers
 # ---------------------------------------------------------------------------
@@ -145,7 +219,7 @@ def _infer_context(source: str, mutated_line_number: int) -> tuple[str, str]:
     for i in range(mutated_line_number - 1, -1, -1):
         line = lines[i]
         if method_name == "unknown":
-            m = re.match(r"\s+def\s+(\w+)\s*\(", line)
+            m = re.match(r"\s*def\s+(\w+)\s*\(", line)
             if m:
                 method_name = m.group(1)
         if class_name == "Unknown":
