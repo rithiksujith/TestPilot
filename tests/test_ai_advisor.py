@@ -346,3 +346,692 @@ class TestCalculatorSuggestedTest:
         assert re.search(r"calculate_discount\s*\(\s*100\s*\)\s*==\s*90", code), (
             "Suggested test must assert calculate_discount(100) == 90"
         )
+
+
+# ===========================================================================
+# score_checker: shared fixtures for the four new operators
+# ===========================================================================
+
+SCORE_DIR = Path("demo_projects/score_checker")
+SCORE_SOURCE = SCORE_DIR / "score_checker.py"
+
+
+def _score_mutation(operator_label: str) -> "Mutation":
+    """Return the first mutation in score_checker.py with the given operator."""
+    from backend.mutations.engine import generate_mutations
+    for m in generate_mutations(SCORE_SOURCE):
+        if m.operator == operator_label:
+            return m
+    pytest.fail(f"No {operator_label!r} mutation found in score_checker.py")
+
+
+# ---------------------------------------------------------------------------
+# Helpers to get specific mutations by operator *and* enclosing function name
+# ---------------------------------------------------------------------------
+
+def _score_mutation_for(operator_label: str, func_name: str) -> "Mutation":
+    """Return the mutation in score_checker.py matching operator *and* the
+    enclosing function/method *func_name*."""
+    from backend.mutations.engine import generate_mutations
+    from backend.ai.advisor import _infer_context
+    for m in generate_mutations(SCORE_SOURCE):
+        if m.operator == operator_label:
+            _, meth = _infer_context(m.original_source, m.line_number)
+            if meth == func_name:
+                return m
+    pytest.fail(
+        f"No {operator_label!r} mutation inside '{func_name}' in score_checker.py"
+    )
+
+
+# ===========================================================================
+# Operator: > → >=  (module-level function: is_high_score)
+# ===========================================================================
+
+@pytest.fixture(scope="module")
+def gt_to_gte_func_mutation() -> "Mutation":
+    return _score_mutation_for("> \u2192 >=", "is_high_score")
+
+
+@pytest.fixture(scope="module")
+def gt_to_gte_func_analysis(gt_to_gte_func_mutation) -> "AnalysisResult":
+    return analyze_surviving_mutation(gt_to_gte_func_mutation)
+
+
+@pytest.fixture(scope="module")
+def gt_to_gte_method_mutation() -> "Mutation":
+    return _score_mutation_for("> \u2192 >=", "is_passing")
+
+
+@pytest.fixture(scope="module")
+def gt_to_gte_method_analysis(gt_to_gte_method_mutation) -> "AnalysisResult":
+    return analyze_surviving_mutation(gt_to_gte_method_mutation)
+
+
+class TestGtToGteAnalysisShape:
+    """AnalysisResult must have all required fields for > → >= mutations."""
+
+    def test_func_returns_analysis_result(self, gt_to_gte_func_analysis):
+        assert isinstance(gt_to_gte_func_analysis, AnalysisResult)
+
+    def test_func_mutation_id_matches(self, gt_to_gte_func_mutation, gt_to_gte_func_analysis):
+        assert gt_to_gte_func_analysis.mutation_id == gt_to_gte_func_mutation.id
+
+    def test_method_returns_analysis_result(self, gt_to_gte_method_analysis):
+        assert isinstance(gt_to_gte_method_analysis, AnalysisResult)
+
+    def test_method_mutation_id_matches(self, gt_to_gte_method_mutation, gt_to_gte_method_analysis):
+        assert gt_to_gte_method_analysis.mutation_id == gt_to_gte_method_mutation.id
+
+
+class TestGtToGteExplanation:
+    def test_func_explanation_mentions_both_operators(self, gt_to_gte_func_analysis):
+        assert ">" in gt_to_gte_func_analysis.explanation
+        assert ">=" in gt_to_gte_func_analysis.explanation
+
+    def test_func_explanation_mentions_boundary(self, gt_to_gte_func_analysis):
+        text = gt_to_gte_func_analysis.explanation.lower()
+        assert "equal" in text or "boundary" in text or "exact" in text
+
+    def test_func_explanation_no_bank_account(self, gt_to_gte_func_analysis):
+        text = gt_to_gte_func_analysis.explanation.lower()
+        assert "bankaccount" not in text and "bank_account" not in text
+
+    def test_method_explanation_mentions_both_operators(self, gt_to_gte_method_analysis):
+        assert ">" in gt_to_gte_method_analysis.explanation
+        assert ">=" in gt_to_gte_method_analysis.explanation
+
+    def test_method_explanation_no_bank_account(self, gt_to_gte_method_analysis):
+        text = gt_to_gte_method_analysis.explanation.lower()
+        assert "bankaccount" not in text and "bank_account" not in text
+
+
+class TestGtToGteMissingBehavior:
+    def test_func_missing_behavior_mentions_function(self, gt_to_gte_func_analysis):
+        assert "is_high_score" in gt_to_gte_func_analysis.missing_behavior
+
+    def test_func_missing_behavior_mentions_gap(self, gt_to_gte_func_analysis):
+        text = gt_to_gte_func_analysis.missing_behavior.lower()
+        assert "no " in text or "not " in text or "never" in text or "missing" in text
+
+    def test_method_missing_behavior_mentions_function(self, gt_to_gte_method_analysis):
+        assert "is_passing" in gt_to_gte_method_analysis.missing_behavior
+
+
+class TestGtToGteSuggestedTest:
+    def test_func_test_name_starts_with_test(self, gt_to_gte_func_analysis):
+        assert gt_to_gte_func_analysis.suggested_test_name.startswith("test_")
+
+    def test_func_test_name_is_snake_case(self, gt_to_gte_func_analysis):
+        name = gt_to_gte_func_analysis.suggested_test_name
+        assert re.match(r"^[a-z_][a-z0-9_]*$", name), f"Not snake_case: {name!r}"
+
+    def test_func_test_name_references_function(self, gt_to_gte_func_analysis):
+        assert "is_high_score" in gt_to_gte_func_analysis.suggested_test_name
+
+    def test_func_test_imports_function(self, gt_to_gte_func_analysis):
+        assert "is_high_score" in gt_to_gte_func_analysis.suggested_test
+
+    def test_func_test_no_bank_account(self, gt_to_gte_func_analysis):
+        assert "BankAccount" not in gt_to_gte_func_analysis.suggested_test
+        assert "bank_account" not in gt_to_gte_func_analysis.suggested_test
+
+    def test_func_test_is_valid_python(self, gt_to_gte_func_analysis):
+        try:
+            compile(gt_to_gte_func_analysis.suggested_test, "<test>", "exec")
+        except SyntaxError as exc:
+            pytest.fail(f"Suggested test is not valid Python: {exc}")
+
+    def test_func_test_defines_a_function(self, gt_to_gte_func_analysis):
+        assert "def test_" in gt_to_gte_func_analysis.suggested_test
+
+    def test_func_test_contains_assertion(self, gt_to_gte_func_analysis):
+        assert "assert" in gt_to_gte_func_analysis.suggested_test
+
+    def test_func_test_name_matches_def(self, gt_to_gte_func_analysis):
+        expected = f"def {gt_to_gte_func_analysis.suggested_test_name}("
+        assert expected in gt_to_gte_func_analysis.suggested_test
+
+    def test_func_test_no_unknown(self, gt_to_gte_func_analysis):
+        assert "Unknown" not in gt_to_gte_func_analysis.suggested_test
+
+    def test_method_test_name_references_function(self, gt_to_gte_method_analysis):
+        assert "is_passing" in gt_to_gte_method_analysis.suggested_test_name
+
+    def test_method_test_imports_scoreboard(self, gt_to_gte_method_analysis):
+        assert "ScoreBoard" in gt_to_gte_method_analysis.suggested_test
+
+    def test_method_test_no_bank_account(self, gt_to_gte_method_analysis):
+        assert "BankAccount" not in gt_to_gte_method_analysis.suggested_test
+        assert "bank_account" not in gt_to_gte_method_analysis.suggested_test
+
+    def test_method_test_is_valid_python(self, gt_to_gte_method_analysis):
+        try:
+            compile(gt_to_gte_method_analysis.suggested_test, "<test>", "exec")
+        except SyntaxError as exc:
+            pytest.fail(f"Suggested test is not valid Python: {exc}")
+
+    def test_method_test_no_self_reference(self, gt_to_gte_method_analysis):
+        # The test must not reference 'self._...' outside the class
+        assert "self._" not in gt_to_gte_method_analysis.suggested_test
+
+    def test_method_test_no_unknown(self, gt_to_gte_method_analysis):
+        assert "Unknown" not in gt_to_gte_method_analysis.suggested_test
+
+
+# ===========================================================================
+# Operator: == → !=  (module-level: grade_label; class-method: is_exact_pass)
+# ===========================================================================
+
+@pytest.fixture(scope="module")
+def eq_to_neq_func_mutation() -> "Mutation":
+    return _score_mutation_for("== \u2192 !=", "grade_label")
+
+
+@pytest.fixture(scope="module")
+def eq_to_neq_func_analysis(eq_to_neq_func_mutation) -> "AnalysisResult":
+    return analyze_surviving_mutation(eq_to_neq_func_mutation)
+
+
+@pytest.fixture(scope="module")
+def eq_to_neq_method_mutation() -> "Mutation":
+    return _score_mutation_for("== \u2192 !=", "is_exact_pass")
+
+
+@pytest.fixture(scope="module")
+def eq_to_neq_method_analysis(eq_to_neq_method_mutation) -> "AnalysisResult":
+    return analyze_surviving_mutation(eq_to_neq_method_mutation)
+
+
+class TestEqToNeqAnalysisShape:
+    def test_func_returns_analysis_result(self, eq_to_neq_func_analysis):
+        assert isinstance(eq_to_neq_func_analysis, AnalysisResult)
+
+    def test_method_returns_analysis_result(self, eq_to_neq_method_analysis):
+        assert isinstance(eq_to_neq_method_analysis, AnalysisResult)
+
+
+class TestEqToNeqExplanation:
+    def test_func_explanation_mentions_both_operators(self, eq_to_neq_func_analysis):
+        assert "==" in eq_to_neq_func_analysis.explanation
+        assert "!=" in eq_to_neq_func_analysis.explanation
+
+    def test_func_explanation_mentions_inversion(self, eq_to_neq_func_analysis):
+        text = eq_to_neq_func_analysis.explanation.lower()
+        assert "invert" in text or "only when" in text or "exact" in text or "every" in text
+
+    def test_func_explanation_no_bank_account(self, eq_to_neq_func_analysis):
+        text = eq_to_neq_func_analysis.explanation.lower()
+        assert "bankaccount" not in text and "bank_account" not in text
+
+    def test_method_explanation_no_bank_account(self, eq_to_neq_method_analysis):
+        text = eq_to_neq_method_analysis.explanation.lower()
+        assert "bankaccount" not in text and "bank_account" not in text
+
+
+class TestEqToNeqMissingBehavior:
+    def test_func_missing_behavior_mentions_function(self, eq_to_neq_func_analysis):
+        assert "grade_label" in eq_to_neq_func_analysis.missing_behavior
+
+    def test_func_missing_behavior_mentions_gap(self, eq_to_neq_func_analysis):
+        text = eq_to_neq_func_analysis.missing_behavior.lower()
+        assert "no " in text or "not " in text or "never" in text
+
+    def test_method_missing_behavior_mentions_function(self, eq_to_neq_method_analysis):
+        assert "is_exact_pass" in eq_to_neq_method_analysis.missing_behavior
+
+
+class TestEqToNeqSuggestedTest:
+    def test_func_test_name_starts_with_test(self, eq_to_neq_func_analysis):
+        assert eq_to_neq_func_analysis.suggested_test_name.startswith("test_")
+
+    def test_func_test_name_is_snake_case(self, eq_to_neq_func_analysis):
+        name = eq_to_neq_func_analysis.suggested_test_name
+        assert re.match(r"^[a-z_][a-z0-9_]*$", name), f"Not snake_case: {name!r}"
+
+    def test_func_test_name_references_function(self, eq_to_neq_func_analysis):
+        assert "grade_label" in eq_to_neq_func_analysis.suggested_test_name
+
+    def test_func_test_imports_function(self, eq_to_neq_func_analysis):
+        assert "grade_label" in eq_to_neq_func_analysis.suggested_test
+
+    def test_func_test_no_bank_account(self, eq_to_neq_func_analysis):
+        assert "BankAccount" not in eq_to_neq_func_analysis.suggested_test
+        assert "bank_account" not in eq_to_neq_func_analysis.suggested_test
+
+    def test_func_test_is_valid_python(self, eq_to_neq_func_analysis):
+        try:
+            compile(eq_to_neq_func_analysis.suggested_test, "<test>", "exec")
+        except SyntaxError as exc:
+            pytest.fail(f"Suggested test is not valid Python: {exc}")
+
+    def test_func_test_defines_a_function(self, eq_to_neq_func_analysis):
+        assert "def test_" in eq_to_neq_func_analysis.suggested_test
+
+    def test_func_test_contains_assertion(self, eq_to_neq_func_analysis):
+        assert "assert" in eq_to_neq_func_analysis.suggested_test
+
+    def test_func_test_name_matches_def(self, eq_to_neq_func_analysis):
+        expected = f"def {eq_to_neq_func_analysis.suggested_test_name}("
+        assert expected in eq_to_neq_func_analysis.suggested_test
+
+    def test_func_test_calls_grade_label(self, eq_to_neq_func_analysis):
+        assert "grade_label" in eq_to_neq_func_analysis.suggested_test
+
+    def test_func_test_no_unknown(self, eq_to_neq_func_analysis):
+        assert "Unknown" not in eq_to_neq_func_analysis.suggested_test
+
+    def test_method_test_imports_scoreboard(self, eq_to_neq_method_analysis):
+        assert "ScoreBoard" in eq_to_neq_method_analysis.suggested_test
+
+    def test_method_test_no_bank_account(self, eq_to_neq_method_analysis):
+        assert "BankAccount" not in eq_to_neq_method_analysis.suggested_test
+
+    def test_method_test_is_valid_python(self, eq_to_neq_method_analysis):
+        try:
+            compile(eq_to_neq_method_analysis.suggested_test, "<test>", "exec")
+        except SyntaxError as exc:
+            pytest.fail(f"Suggested test is not valid Python: {exc}")
+
+    def test_method_test_no_self_reference(self, eq_to_neq_method_analysis):
+        assert "self._" not in eq_to_neq_method_analysis.suggested_test
+
+    def test_method_test_no_unknown(self, eq_to_neq_method_analysis):
+        assert "Unknown" not in eq_to_neq_method_analysis.suggested_test
+
+
+# ===========================================================================
+# Operator: != → ==  (module-level: needs_review; class-method: is_failed)
+# ===========================================================================
+
+@pytest.fixture(scope="module")
+def neq_to_eq_func_mutation() -> "Mutation":
+    return _score_mutation_for("!= \u2192 ==", "needs_review")
+
+
+@pytest.fixture(scope="module")
+def neq_to_eq_func_analysis(neq_to_eq_func_mutation) -> "AnalysisResult":
+    return analyze_surviving_mutation(neq_to_eq_func_mutation)
+
+
+@pytest.fixture(scope="module")
+def neq_to_eq_method_mutation() -> "Mutation":
+    return _score_mutation_for("!= \u2192 ==", "is_failed")
+
+
+@pytest.fixture(scope="module")
+def neq_to_eq_method_analysis(neq_to_eq_method_mutation) -> "AnalysisResult":
+    return analyze_surviving_mutation(neq_to_eq_method_mutation)
+
+
+class TestNeqToEqAnalysisShape:
+    def test_func_returns_analysis_result(self, neq_to_eq_func_analysis):
+        assert isinstance(neq_to_eq_func_analysis, AnalysisResult)
+
+    def test_method_returns_analysis_result(self, neq_to_eq_method_analysis):
+        assert isinstance(neq_to_eq_method_analysis, AnalysisResult)
+
+
+class TestNeqToEqExplanation:
+    def test_func_explanation_mentions_both_operators(self, neq_to_eq_func_analysis):
+        assert "!=" in neq_to_eq_func_analysis.explanation
+        assert "==" in neq_to_eq_func_analysis.explanation
+
+    def test_func_explanation_mentions_inversion(self, neq_to_eq_func_analysis):
+        text = neq_to_eq_func_analysis.explanation.lower()
+        assert "invert" in text or "whenever" in text or "only when" in text or "run" in text
+
+    def test_func_explanation_no_bank_account(self, neq_to_eq_func_analysis):
+        text = neq_to_eq_func_analysis.explanation.lower()
+        assert "bankaccount" not in text and "bank_account" not in text
+
+    def test_method_explanation_no_bank_account(self, neq_to_eq_method_analysis):
+        text = neq_to_eq_method_analysis.explanation.lower()
+        assert "bankaccount" not in text and "bank_account" not in text
+
+
+class TestNeqToEqMissingBehavior:
+    def test_func_missing_behavior_mentions_function(self, neq_to_eq_func_analysis):
+        assert "needs_review" in neq_to_eq_func_analysis.missing_behavior
+
+    def test_func_missing_behavior_mentions_gap(self, neq_to_eq_func_analysis):
+        text = neq_to_eq_func_analysis.missing_behavior.lower()
+        assert "no " in text or "not " in text or "never" in text
+
+    def test_method_missing_behavior_mentions_function(self, neq_to_eq_method_analysis):
+        assert "is_failed" in neq_to_eq_method_analysis.missing_behavior
+
+
+class TestNeqToEqSuggestedTest:
+    def test_func_test_name_starts_with_test(self, neq_to_eq_func_analysis):
+        assert neq_to_eq_func_analysis.suggested_test_name.startswith("test_")
+
+    def test_func_test_name_is_snake_case(self, neq_to_eq_func_analysis):
+        name = neq_to_eq_func_analysis.suggested_test_name
+        assert re.match(r"^[a-z_][a-z0-9_]*$", name), f"Not snake_case: {name!r}"
+
+    def test_func_test_name_references_function(self, neq_to_eq_func_analysis):
+        assert "needs_review" in neq_to_eq_func_analysis.suggested_test_name
+
+    def test_func_test_imports_function(self, neq_to_eq_func_analysis):
+        assert "needs_review" in neq_to_eq_func_analysis.suggested_test
+
+    def test_func_test_no_bank_account(self, neq_to_eq_func_analysis):
+        assert "BankAccount" not in neq_to_eq_func_analysis.suggested_test
+        assert "bank_account" not in neq_to_eq_func_analysis.suggested_test
+
+    def test_func_test_is_valid_python(self, neq_to_eq_func_analysis):
+        try:
+            compile(neq_to_eq_func_analysis.suggested_test, "<test>", "exec")
+        except SyntaxError as exc:
+            pytest.fail(f"Suggested test is not valid Python: {exc}")
+
+    def test_func_test_defines_a_function(self, neq_to_eq_func_analysis):
+        assert "def test_" in neq_to_eq_func_analysis.suggested_test
+
+    def test_func_test_contains_assertion(self, neq_to_eq_func_analysis):
+        assert "assert" in neq_to_eq_func_analysis.suggested_test
+
+    def test_func_test_name_matches_def(self, neq_to_eq_func_analysis):
+        expected = f"def {neq_to_eq_func_analysis.suggested_test_name}("
+        assert expected in neq_to_eq_func_analysis.suggested_test
+
+    def test_func_test_no_unknown(self, neq_to_eq_func_analysis):
+        assert "Unknown" not in neq_to_eq_func_analysis.suggested_test
+
+    def test_method_test_imports_scoreboard(self, neq_to_eq_method_analysis):
+        assert "ScoreBoard" in neq_to_eq_method_analysis.suggested_test
+
+    def test_method_test_no_bank_account(self, neq_to_eq_method_analysis):
+        assert "BankAccount" not in neq_to_eq_method_analysis.suggested_test
+
+    def test_method_test_is_valid_python(self, neq_to_eq_method_analysis):
+        try:
+            compile(neq_to_eq_method_analysis.suggested_test, "<test>", "exec")
+        except SyntaxError as exc:
+            pytest.fail(f"Suggested test is not valid Python: {exc}")
+
+    def test_method_test_no_self_reference(self, neq_to_eq_method_analysis):
+        assert "self._" not in neq_to_eq_method_analysis.suggested_test
+
+    def test_method_test_no_unknown(self, neq_to_eq_method_analysis):
+        assert "Unknown" not in neq_to_eq_method_analysis.suggested_test
+
+
+# ===========================================================================
+# Operator: + → -  (module-level: total_score; class-method: combined)
+# ===========================================================================
+
+@pytest.fixture(scope="module")
+def add_to_sub_func_mutation() -> "Mutation":
+    return _score_mutation_for("+ \u2192 -", "total_score")
+
+
+@pytest.fixture(scope="module")
+def add_to_sub_func_analysis(add_to_sub_func_mutation) -> "AnalysisResult":
+    return analyze_surviving_mutation(add_to_sub_func_mutation)
+
+
+@pytest.fixture(scope="module")
+def add_to_sub_method_mutation() -> "Mutation":
+    return _score_mutation_for("+ \u2192 -", "combined")
+
+
+@pytest.fixture(scope="module")
+def add_to_sub_method_analysis(add_to_sub_method_mutation) -> "AnalysisResult":
+    return analyze_surviving_mutation(add_to_sub_method_mutation)
+
+
+@pytest.fixture(scope="module")
+def add_to_sub_calc_mutation() -> "Mutation":
+    """The + → - mutation in calculator.py (add function)."""
+    from backend.mutations.engine import generate_mutations
+    for m in generate_mutations(CALC_SOURCE):
+        if m.operator == "+ \u2192 -":
+            return m
+    pytest.fail("No + → - mutation found in calculator.py")
+
+
+@pytest.fixture(scope="module")
+def add_to_sub_calc_analysis(add_to_sub_calc_mutation) -> "AnalysisResult":
+    return analyze_surviving_mutation(add_to_sub_calc_mutation)
+
+
+class TestAddToSubAnalysisShape:
+    def test_func_returns_analysis_result(self, add_to_sub_func_analysis):
+        assert isinstance(add_to_sub_func_analysis, AnalysisResult)
+
+    def test_method_returns_analysis_result(self, add_to_sub_method_analysis):
+        assert isinstance(add_to_sub_method_analysis, AnalysisResult)
+
+    def test_calc_returns_analysis_result(self, add_to_sub_calc_analysis):
+        assert isinstance(add_to_sub_calc_analysis, AnalysisResult)
+
+
+class TestAddToSubExplanation:
+    def test_func_explanation_mentions_operators(self, add_to_sub_func_analysis):
+        assert "+" in add_to_sub_func_analysis.explanation
+        assert "-" in add_to_sub_func_analysis.explanation
+
+    def test_func_explanation_mentions_sum_or_subtract(self, add_to_sub_func_analysis):
+        text = add_to_sub_func_analysis.explanation.lower()
+        assert "sum" in text or "add" in text or "subtract" in text
+
+    def test_func_explanation_no_bank_account(self, add_to_sub_func_analysis):
+        text = add_to_sub_func_analysis.explanation.lower()
+        assert "bankaccount" not in text and "bank_account" not in text
+
+    def test_method_explanation_no_bank_account(self, add_to_sub_method_analysis):
+        text = add_to_sub_method_analysis.explanation.lower()
+        assert "bankaccount" not in text and "bank_account" not in text
+
+    def test_calc_explanation_mentions_add(self, add_to_sub_calc_analysis):
+        assert "add" in add_to_sub_calc_analysis.explanation
+
+
+class TestAddToSubMissingBehavior:
+    def test_func_missing_behavior_mentions_function(self, add_to_sub_func_analysis):
+        assert "total_score" in add_to_sub_func_analysis.missing_behavior
+
+    def test_func_missing_behavior_mentions_gap(self, add_to_sub_func_analysis):
+        text = add_to_sub_func_analysis.missing_behavior.lower()
+        assert "no " in text or "not " in text or "never" in text
+
+    def test_method_missing_behavior_mentions_function(self, add_to_sub_method_analysis):
+        assert "combined" in add_to_sub_method_analysis.missing_behavior
+
+    def test_calc_missing_behavior_mentions_add(self, add_to_sub_calc_analysis):
+        assert "add" in add_to_sub_calc_analysis.missing_behavior
+
+
+class TestAddToSubSuggestedTest:
+    def test_func_test_name_starts_with_test(self, add_to_sub_func_analysis):
+        assert add_to_sub_func_analysis.suggested_test_name.startswith("test_")
+
+    def test_func_test_name_is_snake_case(self, add_to_sub_func_analysis):
+        name = add_to_sub_func_analysis.suggested_test_name
+        assert re.match(r"^[a-z_][a-z0-9_]*$", name), f"Not snake_case: {name!r}"
+
+    def test_func_test_name_references_function(self, add_to_sub_func_analysis):
+        assert "total_score" in add_to_sub_func_analysis.suggested_test_name
+
+    def test_func_test_imports_function(self, add_to_sub_func_analysis):
+        assert "total_score" in add_to_sub_func_analysis.suggested_test
+
+    def test_func_test_no_bank_account(self, add_to_sub_func_analysis):
+        assert "BankAccount" not in add_to_sub_func_analysis.suggested_test
+        assert "bank_account" not in add_to_sub_func_analysis.suggested_test
+
+    def test_func_test_is_valid_python(self, add_to_sub_func_analysis):
+        try:
+            compile(add_to_sub_func_analysis.suggested_test, "<test>", "exec")
+        except SyntaxError as exc:
+            pytest.fail(f"Suggested test is not valid Python: {exc}")
+
+    def test_func_test_contains_assertion(self, add_to_sub_func_analysis):
+        assert "assert" in add_to_sub_func_analysis.suggested_test
+
+    def test_func_test_name_matches_def(self, add_to_sub_func_analysis):
+        expected = f"def {add_to_sub_func_analysis.suggested_test_name}("
+        assert expected in add_to_sub_func_analysis.suggested_test
+
+    def test_func_test_no_unknown(self, add_to_sub_func_analysis):
+        assert "Unknown" not in add_to_sub_func_analysis.suggested_test
+
+    def test_func_test_asserts_concrete_value(self, add_to_sub_func_analysis):
+        # Must assert a concrete numeric value, not `is not None`
+        assert "is not None" not in add_to_sub_func_analysis.suggested_test
+        assert "==" in add_to_sub_func_analysis.suggested_test
+
+    def test_method_test_imports_scoreboard(self, add_to_sub_method_analysis):
+        assert "ScoreBoard" in add_to_sub_method_analysis.suggested_test
+
+    def test_method_test_no_bank_account(self, add_to_sub_method_analysis):
+        assert "BankAccount" not in add_to_sub_method_analysis.suggested_test
+
+    def test_method_test_is_valid_python(self, add_to_sub_method_analysis):
+        try:
+            compile(add_to_sub_method_analysis.suggested_test, "<test>", "exec")
+        except SyntaxError as exc:
+            pytest.fail(f"Suggested test is not valid Python: {exc}")
+
+    def test_method_test_no_unknown(self, add_to_sub_method_analysis):
+        assert "Unknown" not in add_to_sub_method_analysis.suggested_test
+
+    def test_calc_test_imports_add(self, add_to_sub_calc_analysis):
+        assert "add" in add_to_sub_calc_analysis.suggested_test
+
+    def test_calc_test_is_valid_python(self, add_to_sub_calc_analysis):
+        try:
+            compile(add_to_sub_calc_analysis.suggested_test, "<test>", "exec")
+        except SyntaxError as exc:
+            pytest.fail(f"Suggested test is not valid Python: {exc}")
+
+    def test_calc_test_asserts_concrete_value(self, add_to_sub_calc_analysis):
+        assert "is not None" not in add_to_sub_calc_analysis.suggested_test
+        assert "==" in add_to_sub_calc_analysis.suggested_test
+
+
+# ===========================================================================
+# No-BankAccount / no-Unknown cross-operator guard tests
+# ===========================================================================
+
+class TestNoBankAccountContamination:
+    """Generated analysis must never reference BankAccount or 'Unknown' for
+    mutations that have nothing to do with BankAccount."""
+
+    def test_gt_to_gte_func_no_bank_account_in_all_fields(
+        self, gt_to_gte_func_analysis
+    ):
+        for field in [
+            gt_to_gte_func_analysis.explanation,
+            gt_to_gte_func_analysis.missing_behavior,
+            gt_to_gte_func_analysis.risk,
+            gt_to_gte_func_analysis.suggested_test,
+            gt_to_gte_func_analysis.suggested_test_name,
+        ]:
+            assert "BankAccount" not in field
+            assert "bank_account" not in field
+            assert "Unknown" not in field
+
+    def test_eq_to_neq_func_no_bank_account_in_all_fields(
+        self, eq_to_neq_func_analysis
+    ):
+        for field in [
+            eq_to_neq_func_analysis.explanation,
+            eq_to_neq_func_analysis.missing_behavior,
+            eq_to_neq_func_analysis.risk,
+            eq_to_neq_func_analysis.suggested_test,
+            eq_to_neq_func_analysis.suggested_test_name,
+        ]:
+            assert "BankAccount" not in field
+            assert "bank_account" not in field
+            assert "Unknown" not in field
+
+    def test_neq_to_eq_func_no_bank_account_in_all_fields(
+        self, neq_to_eq_func_analysis
+    ):
+        for field in [
+            neq_to_eq_func_analysis.explanation,
+            neq_to_eq_func_analysis.missing_behavior,
+            neq_to_eq_func_analysis.risk,
+            neq_to_eq_func_analysis.suggested_test,
+            neq_to_eq_func_analysis.suggested_test_name,
+        ]:
+            assert "BankAccount" not in field
+            assert "bank_account" not in field
+            assert "Unknown" not in field
+
+    def test_add_to_sub_func_no_bank_account_in_all_fields(
+        self, add_to_sub_func_analysis
+    ):
+        for field in [
+            add_to_sub_func_analysis.explanation,
+            add_to_sub_func_analysis.missing_behavior,
+            add_to_sub_func_analysis.risk,
+            add_to_sub_func_analysis.suggested_test,
+            add_to_sub_func_analysis.suggested_test_name,
+        ]:
+            assert "BankAccount" not in field
+            assert "bank_account" not in field
+            assert "Unknown" not in field
+
+
+# ===========================================================================
+# Regression tests: Bug 1 — + → - must not generate wrong argument count
+#                   Bug 2 — self.* boundary must not be presented as hardcoded 50
+# ===========================================================================
+
+class TestAddToSubMethodArityRegression:
+    """Bug 1: _analyze_add_to_sub must not call obj.method(3, 2) for a
+    single-parameter method like ScoreBoard.combined(self, extra)."""
+
+    def test_combined_test_calls_method_with_one_argument(
+        self, add_to_sub_method_analysis
+    ):
+        # The generated test must call combined() with exactly one argument,
+        # not two — combined(self, extra) only accepts one user argument.
+        code = add_to_sub_method_analysis.suggested_test
+        # Reject any call of the form combined(x, y)
+        import re as _re
+        assert not _re.search(r"combined\s*\(\s*\w+\s*,\s*\w+\s*\)", code), (
+            "combined() takes one argument; generated test must not pass two"
+        )
+
+    def test_combined_test_is_valid_python(self, add_to_sub_method_analysis):
+        # The generated test must compile without SyntaxError even if it is a
+        # contextual suggestion (e.g. using pass).
+        try:
+            compile(add_to_sub_method_analysis.suggested_test, "<combined_test>", "exec")
+        except SyntaxError as exc:
+            pytest.fail(f"combined() suggested test is not valid Python: {exc}")
+
+
+class TestGtToGteSelfBoundaryRegression:
+    """Bug 2: when the RHS is self.<attr>, the probe used in the generated
+    test must be the actual constructor default, not an arbitrary 50."""
+
+    def test_is_passing_probe_is_not_bare_50(self, gt_to_gte_method_analysis):
+        # The generated test should use the inferred default (50.0) clearly
+        # attributed to the constructor, NOT silently present a magic 50.
+        # Either it uses the inferred value *with* an explanatory comment, or
+        # it emits a contextual suggestion — it must NOT silently use 50
+        # as though it were the known boundary.
+        code = gt_to_gte_method_analysis.suggested_test
+        # If "50" appears, the test comment must explain why (inferred default
+        # or contextual marker) — i.e. the word "contextual" or "default"
+        # must also be present.
+        import re as _re
+        has_50 = bool(_re.search(r"\b50\b", code))
+        if has_50:
+            assert "default" in code or "contextual" in code, (
+                "Probe value 50 appears without any explanation of where it "
+                "comes from; the test silently presents an arbitrary value as "
+                "the boundary."
+            )
+
+    def test_is_passing_test_is_valid_python(self, gt_to_gte_method_analysis):
+        try:
+            compile(gt_to_gte_method_analysis.suggested_test, "<is_passing_test>", "exec")
+        except SyntaxError as exc:
+            pytest.fail(f"is_passing() suggested test is not valid Python: {exc}")
