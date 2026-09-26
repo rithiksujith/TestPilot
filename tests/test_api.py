@@ -296,3 +296,161 @@ class TestAnalyzeIntegration:
             "project_dir": DEMO_DIR,
         })
         assert response.json()["mutation_score"] == 0.0
+
+
+# ===========================================================================
+# POST /api/analyze — source-file discovery (source_file omitted)
+# ===========================================================================
+
+class TestAnalyzeWithDiscovery:
+    """Tests for the auto-discovery path where source_file is not supplied."""
+
+    def test_project_dir_only_calls_pipeline(self):
+        """Omitting source_file should still reach run_pipeline via discovery."""
+        with patch("backend.api.routes.run_pipeline") as mock_pipe:
+            mock_pipe.return_value = _fake_survived_result()
+            response = client.post("/api/analyze", json={
+                "project_dir": DEMO_DIR,
+            })
+        assert response.status_code == 200
+        mock_pipe.assert_called_once()
+
+    def test_project_dir_only_discovers_bank_account(self):
+        """When source_file is omitted, discovery must resolve to bank_account.py."""
+        with patch("backend.api.routes.run_pipeline") as mock_pipe:
+            mock_pipe.return_value = _fake_survived_result()
+            client.post("/api/analyze", json={
+                "project_dir": DEMO_DIR,
+            })
+        call_kwargs = mock_pipe.call_args
+        assert "bank_account" in str(call_kwargs)
+
+    def test_project_dir_only_returns_200(self):
+        with patch("backend.api.routes.run_pipeline") as mock_pipe:
+            mock_pipe.return_value = _fake_killed_result()
+            response = client.post("/api/analyze", json={
+                "project_dir": DEMO_DIR,
+            })
+        assert response.status_code == 200
+
+    def test_project_dir_only_response_has_status(self):
+        with patch("backend.api.routes.run_pipeline") as mock_pipe:
+            mock_pipe.return_value = _fake_killed_result()
+            response = client.post("/api/analyze", json={
+                "project_dir": DEMO_DIR,
+            })
+        assert response.json()["status"] in (KILLED, SURVIVED)
+
+    def test_invalid_project_dir_returns_422(self):
+        response = client.post("/api/analyze", json={
+            "project_dir": "does_not_exist_dir",
+        })
+        assert response.status_code == 422
+
+    def test_project_dir_with_no_sources_returns_422(self, tmp_path):
+        """A project dir containing only test files should yield 422."""
+        (tmp_path / "test_only.py").write_text("def test_x(): pass\n")
+        response = client.post("/api/analyze", json={
+            "project_dir": str(tmp_path),
+        })
+        assert response.status_code == 422
+        assert "No Python source files" in response.json()["detail"]
+
+    def test_discovery_uses_first_sorted_source(self, tmp_path):
+        """Exactly which file discovery picks must be the first sorted result."""
+        (tmp_path / "aaa.py").write_text("x = 1 >= 0\n")
+        (tmp_path / "zzz.py").write_text("y = 2 >= 1\n")
+        with patch("backend.api.routes.run_pipeline") as mock_pipe:
+            mock_pipe.return_value = _fake_killed_result()
+            client.post("/api/analyze", json={"project_dir": str(tmp_path)})
+        called_source = str(mock_pipe.call_args.kwargs.get("source_file", ""))
+        assert "aaa.py" in called_source
+
+    def test_empty_body_uses_discovery(self):
+        """An empty body {} must route through discovery (not a hardcoded path)."""
+        with patch("backend.api.routes.discover_source_files") as mock_disc, \
+             patch("backend.api.routes.run_pipeline") as mock_pipe:
+            mock_disc.return_value = [Path(DEMO_SOURCE).resolve()]
+            mock_pipe.return_value = _fake_survived_result()
+            response = client.post("/api/analyze", json={})
+        assert response.status_code == 200
+        mock_disc.assert_called_once()
+
+
+# ===========================================================================
+# POST /api/analyze — explicit source_file still works (Phase 1 compat)
+# ===========================================================================
+
+class TestAnalyzeWithExplicitSourceFile:
+    """Ensure the existing explicit source_file path is fully preserved."""
+
+    def test_explicit_source_file_is_used(self):
+        with patch("backend.api.routes.run_pipeline") as mock_pipe:
+            mock_pipe.return_value = _fake_survived_result()
+            client.post("/api/analyze", json={
+                "source_file": DEMO_SOURCE,
+                "project_dir": DEMO_DIR,
+            })
+        called_source = str(mock_pipe.call_args.kwargs.get("source_file", ""))
+        assert "bank_account.py" in called_source
+
+    def test_explicit_source_file_does_not_call_discovery(self):
+        with patch("backend.api.routes.discover_source_files") as mock_disc, \
+             patch("backend.api.routes.run_pipeline") as mock_pipe:
+            mock_pipe.return_value = _fake_survived_result()
+            client.post("/api/analyze", json={
+                "source_file": DEMO_SOURCE,
+                "project_dir": DEMO_DIR,
+            })
+        mock_disc.assert_not_called()
+
+    def test_explicit_nonexistent_source_file_returns_422(self):
+        response = client.post("/api/analyze", json={
+            "source_file": "ghost_file.py",
+            "project_dir": DEMO_DIR,
+        })
+        assert response.status_code == 422
+        assert "source_file not found" in response.json()["detail"]
+
+    def test_returns_200_with_explicit_source_and_project(self):
+        with patch("backend.api.routes.run_pipeline") as mock_pipe:
+            mock_pipe.return_value = _fake_killed_result()
+            response = client.post("/api/analyze", json={
+                "source_file": DEMO_SOURCE,
+                "project_dir": DEMO_DIR,
+            })
+        assert response.status_code == 200
+
+
+# ===========================================================================
+# POST /api/analyze — bank_account end-to-end via discovery (slow)
+# ===========================================================================
+
+class TestBankAccountViaDiscovery:
+    """Integration tests: run the real pipeline using only project_dir."""
+
+    def test_project_dir_only_returns_survived(self):
+        """The bank_account demo must still SURVIVE when source_file is omitted."""
+        response = client.post("/api/analyze", json={
+            "project_dir": DEMO_DIR,
+        })
+        assert response.status_code == 200
+        assert response.json()["status"] == SURVIVED
+
+    def test_project_dir_only_has_ai_insight(self):
+        response = client.post("/api/analyze", json={
+            "project_dir": DEMO_DIR,
+        })
+        assert response.json()["ai_insight"] is not None
+
+    def test_project_dir_only_source_file_is_bank_account(self):
+        response = client.post("/api/analyze", json={
+            "project_dir": DEMO_DIR,
+        })
+        assert "bank_account" in response.json()["source_file"]
+
+    def test_project_dir_only_mutation_score_zero(self):
+        response = client.post("/api/analyze", json={
+            "project_dir": DEMO_DIR,
+        })
+        assert response.json()["mutation_score"] == 0.0

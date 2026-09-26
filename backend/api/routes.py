@@ -15,6 +15,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from backend.discovery import discover_source_files
 from backend.pipeline import PipelineResult, run_pipeline
 
 router = APIRouter(prefix="/api")
@@ -27,14 +28,18 @@ router = APIRouter(prefix="/api")
 class AnalyzeRequest(BaseModel):
     """Body for POST /api/analyze.
 
-    For the MVP both fields default to the bank_account demo project so that
-    the frontend (and curl) can call the endpoint with an empty body ``{}``
-    and still get a useful result.
+    ``project_dir`` is required (defaults to the bank_account demo so that an
+    empty body ``{}`` still works).  ``source_file`` is optional: when omitted
+    the API discovers Python source files in ``project_dir`` automatically and
+    selects the first one.
     """
 
-    source_file: str = Field(
-        default="demo_projects/bank_account/bank_account.py",
-        description="Path to the Python source file to mutate (relative to project root).",
+    source_file: Optional[str] = Field(
+        default=None,
+        description=(
+            "Path to the Python source file to mutate (relative to project root). "
+            "If omitted, the first source file discovered in project_dir is used."
+        ),
     )
     project_dir: str = Field(
         default="demo_projects/bank_account",
@@ -121,28 +126,42 @@ def analyze(body: AnalyzeRequest) -> AnalyzeResponse:
     """Run the full mutation-testing pipeline and return a structured result.
 
     The pipeline:
-    1. Generates a mutation (``>=`` → ``>``) in *source_file*.
-    2. Copies *project_dir* to a temp directory with the mutation applied.
-    3. Runs pytest inside that temp directory.
-    4. Classifies the result as **KILLED** or **SURVIVED**.
-    5. If SURVIVED, calls the AI advisor for an explanation and a suggested test.
-    6. Returns the combined result as JSON.
+    1. Resolves the source file — uses the explicit ``source_file`` when
+       provided, otherwise discovers Python source files in ``project_dir``
+       and selects the first one.
+    2. Generates a mutation (``>=`` → ``>``) in *source_file*.
+    3. Copies *project_dir* to a temp directory with the mutation applied.
+    4. Runs pytest inside that temp directory.
+    5. Classifies the result as **KILLED** or **SURVIVED**.
+    6. If SURVIVED, calls the AI advisor for an explanation and a suggested test.
+    7. Returns the combined result as JSON.
 
-    For the MVP, send an empty body ``{}`` to analyze the bank_account demo.
+    For the demo, send an empty body ``{}`` to analyze the bank_account project
+    via automatic source-file discovery.
     """
-    source = Path(body.source_file)
     project = Path(body.project_dir)
 
-    if not source.exists():
-        raise HTTPException(
-            status_code=422,
-            detail=f"source_file not found: {body.source_file}",
-        )
     if not project.is_dir():
         raise HTTPException(
             status_code=422,
             detail=f"project_dir not found: {body.project_dir}",
         )
+
+    if body.source_file is not None:
+        source = Path(body.source_file)
+        if not source.exists():
+            raise HTTPException(
+                status_code=422,
+                detail=f"source_file not found: {body.source_file}",
+            )
+    else:
+        candidates = discover_source_files(project)
+        if not candidates:
+            raise HTTPException(
+                status_code=422,
+                detail=f"No Python source files found in project_dir: {body.project_dir}",
+            )
+        source = candidates[0]
 
     try:
         result = run_pipeline(
