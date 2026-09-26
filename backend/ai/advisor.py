@@ -151,6 +151,45 @@ def _analyze_gte_to_gt_method(
     )
 
 
+def _expected_return_value(
+    source: str,
+    mutated_line_number: int,
+    lhs: str,
+    boundary: float,
+) -> str | None:
+    """Try to compute the expected return value for a boundary call.
+
+    Scans the lines immediately after *mutated_line_number* looking for a
+    ``return <expr>`` statement inside the guarded block, then evaluates
+    *expr* with ``lhs = boundary``.  Returns a repr-string on success or
+    ``None`` if the expression cannot be evaluated safely.
+    """
+    lines = source.splitlines()
+    # 1-based → 0-based; start scanning from the line after the if-statement.
+    start = mutated_line_number  # already 0-based for the line *after*
+    for i in range(start, min(start + 10, len(lines))):
+        line = lines[i]
+        m = re.match(r"\s*return\s+(.+)", line)
+        if m:
+            expr = m.group(1).strip()
+            # Determine the parameter name: last segment of lhs (strip leading _).
+            param = lhs.split(".")[-1].lstrip("_")
+            try:
+                result = eval(expr, {"__builtins__": {}}, {param: boundary})  # noqa: S307
+            except Exception:
+                return None
+            # Represent integers cleanly (90 not 90.0) when the value is whole.
+            if isinstance(result, float) and result == int(result):
+                return repr(int(result))
+            return repr(result)
+        # Stop if we leave the indented block (blank lines are fine, but a
+        # dedented non-blank line means we've exited the if-body).
+        stripped = line.strip()
+        if stripped and not line[0].isspace():
+            break
+    return None
+
+
 def _analyze_gte_to_gt_function(
     mutation: Mutation,
     lhs: str,
@@ -167,16 +206,36 @@ def _analyze_gte_to_gt_function(
         boundary = float(rhs)
         boundary_repr = repr(int(boundary) if boundary == int(boundary) else boundary)
     except ValueError:
+        boundary = None
         boundary_repr = rhs
 
-    suggested_test = textwrap.dedent(f"""\
-        from {module_stem} import {func_name}
+    # Attempt to derive a meaningful expected value from the function body so
+    # the assertion is `assert func(boundary) == expected` rather than the
+    # weaker `assert result is not None`.
+    expected_repr = None
+    if boundary is not None:
+        expected_repr = _expected_return_value(
+            mutation.original_source, mutation.line_number, lhs, boundary
+        )
+
+    if expected_repr is not None:
+        assertion_line = f"assert {func_name}({boundary_repr}) == {expected_repr}"
+        suggested_test = textwrap.dedent(f"""\
+            from {module_stem} import {func_name}
 
 
-        def test_{func_name}_at_boundary():
-            result = {func_name}({boundary_repr})
-            assert result is not None
-    """)
+            def test_{func_name}_at_boundary():
+                {assertion_line}
+        """)
+    else:
+        suggested_test = textwrap.dedent(f"""\
+            from {module_stem} import {func_name}
+
+
+            def test_{func_name}_at_boundary():
+                result = {func_name}({boundary_repr})
+                assert result is not None
+        """)
 
     return AnalysisResult(
         mutation_id=mutation.id,

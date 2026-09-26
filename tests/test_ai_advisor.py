@@ -330,3 +330,19 @@ class TestCalculatorSuggestedTest:
         assert expected in calculator_analysis.suggested_test, (
             f"Expected '{expected}' in suggested_test body"
         )
+
+    def test_suggested_test_asserts_expected_value_not_none_check(self, calculator_analysis):
+        # The assertion must be a concrete value check, not the weak `is not None`.
+        code = calculator_analysis.suggested_test
+        assert "is not None" not in code, (
+            "Suggested test must not use the weak 'assert result is not None'; "
+            "it must assert the expected return value."
+        )
+
+    def test_suggested_test_asserts_calculate_discount_100_equals_90(self, calculator_analysis):
+        # calculate_discount(100) == 100 * 0.9 == 90; the generated test must
+        # verify this exact expected value so the mutation is killed.
+        code = calculator_analysis.suggested_test
+        assert re.search(r"calculate_discount\s*\(\s*100\s*\)\s*==\s*90", code), (
+            "Suggested test must assert calculate_discount(100) == 90"
+        )
