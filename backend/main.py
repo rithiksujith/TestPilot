@@ -11,6 +11,7 @@ Or from the project root:
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from backend.api.routes import router
@@ -19,6 +20,13 @@ app = FastAPI(
     title="TestPilot API",
     description="Mutation-testing pipeline with AI-powered test gap analysis.",
     version="0.1.0",
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(router)
