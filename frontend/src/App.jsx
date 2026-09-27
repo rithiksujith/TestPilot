@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from 'react'
-
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -303,7 +303,7 @@ export default function App() {
     setErrorMsg('')
     setSelectedId(null)
     try {
-      const resp = await fetch('/api/analyze', {
+      const resp = await fetch(`${API_URL}/api/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ project_dir: selectedProject }),
