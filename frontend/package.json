@@ -5,13 +5,14 @@
   "type": "module",
   "engines": {
     "node": "22.x"
-},
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
+    "fdir": "^6.5.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
